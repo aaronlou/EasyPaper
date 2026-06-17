@@ -1,14 +1,13 @@
 use async_trait::async_trait;
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePool};
 use sqlx::Row;
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePool};
 use std::str::FromStr;
 use uuid::Uuid;
 
+use crate::domain::interpretation::Interpretation;
+use crate::domain::paper::{Paper, PaperStatus, PaperSummary};
+use crate::domain::repositories::PaperRepository;
 use crate::error::AppError;
-use crate::models::interpretation::Interpretation;
-use crate::models::paper::{Paper, PaperStatus, PaperSummary};
-
-use super::PaperStore;
 
 /// SQLite 实现。用 sqlx 连接池
 #[derive(Clone)]
@@ -34,7 +33,7 @@ impl SqliteStore {
 }
 
 #[async_trait]
-impl PaperStore for SqliteStore {
+impl PaperRepository for SqliteStore {
     async fn insert_paper(&self, paper: &Paper) -> anyhow::Result<()> {
         let authors_json = serde_json::to_string(&paper.authors)?;
         let status_str = format!("{:?}", paper.status).to_lowercase();

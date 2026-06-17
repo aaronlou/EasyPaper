@@ -1,9 +1,11 @@
 // ── API 封装（沿用 PhotoCurate-Rust 的 async function 导出 + store 调用模式）
 
 import type {
+  ConceptExpansion,
   HealthResponse,
   PaperDetail,
   PaperSummary,
+  ProgressInfo,
   UploadResponse,
 } from "@/types";
 
@@ -49,4 +51,17 @@ export async function listPapers(): Promise<PaperSummary[]> {
 
 export async function getPaper(id: string): Promise<PaperDetail> {
   return request(`/papers/${id}`);
+}
+
+export async function getProgress(id: string): Promise<ProgressInfo> {
+  return request(`/papers/${id}/progress`);
+}
+
+export async function expandConcept(
+  paperId: string,
+  conceptId: string,
+): Promise<ConceptExpansion> {
+  return request(`/papers/${paperId}/concepts/${conceptId}/expand`, {
+    method: "POST",
+  });
 }

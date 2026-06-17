@@ -14,7 +14,10 @@ export type Block =
   | ComparisonBlock
   | QuizBlock
   | CodeFragmentBlock
-  | CustomHtmlBlock;
+  | CustomHtmlBlock
+  | FigureBlock
+  | ChartBlock
+  | DiagramBlock;
 
 export interface SectionBlock {
   type: "section";
@@ -90,6 +93,35 @@ export interface CustomHtmlBlock {
   html: string;
 }
 
+export interface FigureBlock {
+  type: "figure";
+  id: string;
+  svg: string;
+  caption?: string;
+}
+
+export interface ChartDataPoint {
+  label: string;
+  value: number;
+}
+
+export interface ChartBlock {
+  type: "chart";
+  id: string;
+  chart_type: "bar" | "line" | "pie";
+  title?: string;
+  data: ChartDataPoint[];
+  x_label?: string;
+  y_label?: string;
+}
+
+export interface DiagramBlock {
+  type: "diagram";
+  id: string;
+  svg: string;
+  caption?: string;
+}
+
 // ── Concept ────────────────────────
 
 export interface Concept {
@@ -138,4 +170,108 @@ export interface HealthResponse {
 
 export interface UploadResponse {
   paper: PaperSummary;
+}
+
+// ── Progress ───────────────────────
+
+export interface ProgressInfo {
+  phase: "uploaded" | "interpreting" | "parsing" | "saving" | "completed" | "failed";
+  stage: string;
+  message: string;
+  percent: number;
+  updated_at: string;
+}
+
+// ── Concept Expansion ──────────────
+
+export interface ConceptExpansion {
+  term: string;
+  expanded_definition: string;
+  in_this_paper: string;
+  analogy: string;
+  example: string;
+  common_misconceptions: string;
+  intuition: string;
+  mechanism_steps: MechanismStep[];
+  interactive_demo?: InteractiveDemo | null;
+  contrast_cases: ContrastCase[];
+  check_questions: CheckQuestion[];
+  key_takeaways: string[];
+  prerequisites: string[];
+  paper_evidence: ConceptEvidence[];
+  research_trail: ResearchStep[];
+  reference_links: ReferenceLink[];
+  external_queries: string[];
+  related_concepts: string[];
+  follow_up_questions: string[];
+}
+
+export interface ConceptEvidence {
+  claim: string;
+  quote: string;
+  cite?: string;
+}
+
+export interface MechanismStep {
+  title: string;
+  input: string;
+  process: string;
+  output: string;
+  why_it_matters: string;
+}
+
+export interface InteractiveDemo {
+  title: string;
+  prompt: string;
+  knobs: DemoKnob[];
+  scenarios: DemoScenario[];
+}
+
+export interface DemoKnob {
+  name: string;
+  low_label: string;
+  high_label: string;
+  default_value: number;
+  effect: string;
+}
+
+export interface DemoScenario {
+  label: string;
+  observation: string;
+  explanation: string;
+}
+
+export interface ContrastCase {
+  label: string;
+  without_concept: string;
+  with_concept: string;
+  lesson: string;
+}
+
+export interface CheckQuestion {
+  question: string;
+  options: CheckOption[];
+  explanation: string;
+}
+
+export interface CheckOption {
+  text: string;
+  correct: boolean;
+}
+
+export interface ResearchStep {
+  question: string;
+  action: string;
+  finding: string;
+  confidence: "high" | "medium" | "low" | string;
+}
+
+export interface ReferenceLink {
+  title: string;
+  authors: string[];
+  venue?: string;
+  year?: string;
+  url?: string;
+  relevance: string;
+  source_type: "paper" | "web" | "paper_reference" | "inferred" | string;
 }

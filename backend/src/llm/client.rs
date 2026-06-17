@@ -37,16 +37,12 @@ impl LlmClient {
     /// 调用 LLM 并期望返回 JSON（解析成 serde_json::Value）
     pub async fn call_json(&self, system: &str, user: &str) -> AppResult<Value> {
         let raw = self.call_text(system, user).await?;
-        parse_json_lenient(&raw)
-            .map_err(|e| AppError::InvalidLlmOutput(format!("{e}")))
+        parse_json_lenient(&raw).map_err(|e| AppError::InvalidLlmOutput(format!("{e}")))
     }
 
     /// 调用 LLM 返回纯文本
     pub async fn call_text(&self, system: &str, user: &str) -> AppResult<String> {
-        let api_key = self
-            .api_key
-            .as_ref()
-            .ok_or(AppError::LlmNotConfigured)?;
+        let api_key = self.api_key.as_ref().ok_or(AppError::LlmNotConfigured)?;
 
         let url = if self.uses_responses_api() {
             format!("{}/responses", self.base_url.trim_end_matches('/'))
@@ -128,10 +124,10 @@ fn parse_json_lenient(raw: &str) -> Result<Value, serde_json::Error> {
         return serde_json::from_str(trimmed);
     }
     // 尝试去掉 markdown 代码块
-    if let Some(start) = trimmed.find('{') {
-        if let Some(end) = trimmed.rfind('}') {
-            return serde_json::from_str(&trimmed[start..=end]);
-        }
+    if let Some(start) = trimmed.find('{')
+        && let Some(end) = trimmed.rfind('}')
+    {
+        return serde_json::from_str(&trimmed[start..=end]);
     }
     serde_json::from_str(trimmed)
 }

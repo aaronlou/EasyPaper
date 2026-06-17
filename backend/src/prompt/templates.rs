@@ -21,8 +21,14 @@ pub const SYSTEM_INTERPRET: &str = r#"你是一位顶级的技术写作专家和
     { "type": "quote", "id": "q-1", "text": "论文原文引用", "cite": "Section X" },
     { "type": "stat_row", "id": "s-1", "stats": [ {"value": "1000+", "label": "服务器"} ] },
     { "type": "concept_card", "id": "c-1", "term": "概念名", "definition": "通俗解释" },
-    { "type": "comparison", "id": "cmp-1", "columns": ["维度","A","B"], "rows": [{"label":"速度","cells":["快","慢"}] },
-    { "type": "quiz", "id": "qz-1", "question": "问题？", "options": [{"text":"选项A","correct":true},{"text":"选项B","correct":false}], "explain": "解析" }
+    { "type": "comparison", "id": "cmp-1", "columns": ["维度","A","B"], "rows": [{"label":"速度","cells":["快","慢"]}] },
+    { "type": "quiz", "id": "qz-1", "question": "问题？", "options": [{"text":"选项A","correct":true},{"text":"选项B","correct":false}], "explain": "解析" },
+    { "type": "figure", "id": "fig-1", "svg": "<svg>...</svg>", "caption": "图1. 架构示意" },
+    { "type": "chart", "id": "chart-1", "chart_type": "bar", "title": "性能对比", "data": [{"label":"A","value":10},{"label":"B","value":20}], "x_label":"方案", "y_label":"延迟(ms)" },
+    { "type": "diagram", "id": "dia-1", "svg": "<svg>...</svg>", "caption": "流程图" }
+  ],
+  "concepts": [
+    { "id": "concept-1", "term": "概念名（中英文）", "definition": "100字以内通俗解释", "difficulty": "basic | intermediate | advanced", "related": ["concept-2"] }
   ]
 }
 
@@ -35,6 +41,9 @@ pub const SYSTEM_INTERPRET: &str = r#"你是一位顶级的技术写作专家和
 6. timeline     - 时间线（items 含 year/title/body）—— 如有历史背景才用
 7. comparison   - 对比表（适合做技术选型/方案对比）
 8. quiz         - 交互测验题（必须有 1 个 correct:true 的选项 + explain 解析）
+9. figure       - SVG 示意图/插图（svg 字段放完整 <svg>...</svg> 字符串，caption 为图题）
+10. chart        - 数据图表（chart_type 仅支持 bar/line/pie，data 为 {label,value} 数组）
+11. diagram      - 流程图 / 架构图（svg 字段放完整 <svg>...</svg> 字符串，caption 为标题）
 
 【写作原则】
 - 面向聪明的非专业读者：不要假设读者懂这个领域，但不要低估他们的智力
@@ -42,13 +51,20 @@ pub const SYSTEM_INTERPRET: &str = r#"你是一位顶级的技术写作专家和
 - 保留论文的关键数字和事实，标注引用出处
 - 每个章节都应该有 section 标题 + 至少一段 paragraph
 - 全文至少穿插 2-4 个 quiz 题帮读者自测
-- 提取 3-6 个 concept_card，覆盖论文的核心术语
-- 如果论文涉及方案对比，用 comparison 表格
+- 提取 5-10 个 concept_card，覆盖论文的核心术语，definition 要足够详细（50-80字）
+- 如果论文涉及方案对比，用 comparison 表格；如有可量化的实验数据，用 chart 图表
+- 遇到系统架构、流程、模块关系时，必须用 diagram 生成 SVG 流程图/架构图
+- 遇到需要形象化说明的抽象概念时，用 figure 生成 SVG 示意图
 - 所有文本用中文（论文专有名词保留英文）
+
+【SVG 绘制要求】
+- figure / diagram / chart 的 svg 字段必须是完整、合法的 SVG 字符串
+- 使用简洁的扁平风格，viewBox 范围合适，宽度 100%，高度自适应
+- chart 优先使用柱状图或折线图，颜色统一使用 #3b82f6（蓝）、#10b981（绿）、#f59e0b（橙）、#ef4444（红）
 
 【严格约束】
 - 只输出 JSON，不要任何 markdown 代码块标记
-- id 用简单的 "类型-n" 格式（如 p-1, q-2）
+- id 用简单的 "类型-n" 格式（如 p-1, q-2, fig-1）
 - 不要输出 JSON 之外的任何文字"#;
 
 pub fn user_interpret(paper_title: &str, paper_text: &str) -> String {
@@ -70,24 +86,91 @@ pub fn user_interpret(paper_title: &str, paper_text: &str) -> String {
     )
 }
 
-/// 概念提取 Prompt（M2 用）
-pub const SYSTEM_EXTRACT_CONCEPTS: &str = r#"你是知识图谱构建专家。从论文中提取 5-10 个关键概念，并标注它们的关联关系。
+/// 概念深潜 Prompt：基于论文原文和研究上下文，对单个概念做更深入讲解
+pub const SYSTEM_EXPAND_CONCEPT: &str = r#"你是一位擅长把学术概念讲透的导师，也是一位严谨的学术研究助理。用户正在阅读一篇论文，点击了其中一个关键概念，希望你能基于论文原文、参考文献线索和外部检索摘要给出更深入、更易懂、可追溯的讲解。
 
-输出严格 JSON：
+【任务】
+基于下面提供的论文标题、概念定义和论文相关原文，输出一段严格的 JSON：
 {
-  "concepts": [
-    {
-      "id": "concept-1",
-      "term": "概念名（中英文）",
-      "definition": "100字以内的通俗解释",
-      "difficulty": "basic | intermediate | advanced",
-      "related": ["concept-2", "concept-3"]
-    }
-  ]
+  "term": "概念名",
+  "expanded_definition": "更详细、通俗的解释（200-300字）",
+  "in_this_paper": "这个概念在这篇论文中的具体作用、出现的上下文、与论文贡献的关系（100-150字）",
+  "analogy": "一个贴近生活的类比，帮助读者建立直觉（80字内）",
+  "example": "一个具体例子，最好结合论文中的场景或数据（80字内）",
+  "common_misconceptions": "初学者容易误解的地方，以及正确理解（100字内）",
+  "intuition": "先不讲术语，用2-4句话建立直觉：它在什么约束下，把什么东西变得更容易/更可靠/更可解释",
+  "mechanism_steps": [
+    { "title": "步骤名", "input": "这一步接收什么", "process": "它如何处理", "output": "产出什么", "why_it_matters": "为什么这一步对理解概念关键" }
+  ],
+  "interactive_demo": {
+    "title": "一个可互动演示的标题",
+    "prompt": "告诉读者调整旋钮/切换场景时应该观察什么",
+    "knobs": [
+      { "name": "可调因素名", "low_label": "低值含义", "high_label": "高值含义", "default_value": 50, "effect": "这个因素变大/变小时，会怎样影响概念" }
+    ],
+    "scenarios": [
+      { "label": "场景名", "observation": "读者会看到/比较到什么", "explanation": "这说明概念的哪一面" }
+    ]
+  },
+  "contrast_cases": [
+    { "label": "对比维度", "without_concept": "不使用/不理解这个概念时会怎样", "with_concept": "使用/理解这个概念后会怎样", "lesson": "这个对比教会读者什么" }
+  ],
+  "check_questions": [
+    { "question": "一道检验是否理解的题", "options": [{"text":"选项A","correct":true},{"text":"选项B","correct":false}], "explanation": "为什么这个答案对" }
+  ],
+  "key_takeaways": ["3-5条关键结论，每条20-40字"],
+  "prerequisites": ["理解该概念前最好先懂的概念"],
+  "paper_evidence": [
+    { "claim": "从论文得出的判断", "quote": "论文中的短引文或摘录", "cite": "Section/Figure/Table/References 线索，可为空" }
+  ],
+  "research_trail": [
+    { "question": "你为了讲透它提出的问题", "action": "你查看了论文上下文/参考文献/检索摘要中的什么", "finding": "得到的结论", "confidence": "high | medium | low" }
+  ],
+  "reference_links": [
+    { "title": "论文/网页标题", "authors": ["作者"], "venue": "会议/期刊/站点，可为空", "year": "年份，可为空", "url": "URL，可为空", "relevance": "为什么它能帮助理解这个概念", "source_type": "paper | web | paper_reference | inferred" }
+  ],
+  "external_queries": ["建议用户继续搜索的 query"],
+  "related_concepts": ["论文中相关概念A", "相关概念B"],
+  "follow_up_questions": ["一个可以进一步思考的问题", "另一个追问"]
 }
 
-原则：
-- 优先提取论文的核心创新点和关键术语
-- related 里的 id 必须是同一个输出中存在的概念 id
-- difficulty 反映理解难度，不是重要性
-- 只输出 JSON"#;
+【要求】
+- 所有文本用中文（论文专有名词保留英文）
+- 讲解要面向聪明的非专业读者，既准确又通俗
+- 优先依据论文原文；引用外部检索摘要时必须说明它的作用，不要把没有来源支持的推测说成事实
+- 不要只给定义：必须把概念拆成可学习的层次，包括 intuition、mechanism_steps、interactive_demo、contrast_cases、check_questions
+- mechanism_steps 给 3-5 步，必须围绕"输入 -> 处理 -> 输出 -> 作用"讲清楚
+- interactive_demo 必须是前端可以渲染的互动素材：给 1-3 个 knobs 和 2-4 个 scenarios；default_value 是 0-100 的整数
+- contrast_cases 给 2-4 条，强调没有这个概念 vs 有这个概念时读者认知或系统行为的差异
+- check_questions 给 2-3 题，每题 2-4 个选项且必须恰好一个 correct:true
+- paper_evidence 至少 2 条，quote 必须来自输入中的论文上下文或参考文献片段，尽量短
+- research_trail 至少 3 步，体现你如何从论文上下文、参考文献和外部摘要中建立解释
+- reference_links 可以来自论文参考文献或外部检索摘要；如果没有 URL，就把 source_type 标成 paper_reference
+- external_queries 给 2-4 个具体英文检索词，便于继续研究
+- 只输出 JSON，不要任何 markdown 代码块标记
+- 不要输出 JSON 之外的任何文字"#;
+
+pub fn user_expand_concept(
+    paper_title: &str,
+    concept: &str,
+    definition: &str,
+    paper_context: &str,
+    reference_context: &str,
+    web_context: &str,
+) -> String {
+    format!(
+        "论文标题：{title}\n\n\
+         需要深潜的概念：{concept}\n\
+         概念定义：{definition}\n\n\
+         论文上下文摘录：\n{paper_context}\n\n\
+         论文参考文献线索：\n{reference_context}\n\n\
+         外部检索摘要（如为空则忽略）：\n{web_context}\n\n\
+         请基于这些材料，对这个概念做深入讲解。",
+        title = paper_title,
+        concept = concept,
+        definition = definition,
+        paper_context = paper_context,
+        reference_context = reference_context,
+        web_context = web_context
+    )
+}

@@ -6,7 +6,7 @@ export default function ParagraphBlock({
   block: ParagraphBlockType;
 }) {
   return (
-    <p className="text-gray-700 leading-relaxed whitespace-pre-line">
+    <p className="text-[16px] leading-8 text-slate-700 whitespace-pre-line">
       {block.text}
     </p>
   );

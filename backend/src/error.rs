@@ -49,30 +49,36 @@ impl IntoResponse for AppError {
         let (status, code, message) = match &self {
             AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, "BAD_REQUEST", msg.clone()),
             AppError::NotFound(msg) => (StatusCode::NOT_FOUND, "NOT_FOUND", msg.clone()),
-            AppError::PayloadTooLarge { limit } => {
-                (StatusCode::PAYLOAD_TOO_LARGE, "PAYLOAD_TOO_LARGE", format!("文件过大，最大 {limit} 字节"))
-            }
-            AppError::PdfExtract(msg) => {
-                (StatusCode::UNPROCESSABLE_ENTITY, "PDF_EXTRACT_FAILED", msg.clone())
-            }
-            AppError::LlmCall(msg) => {
-                (StatusCode::BAD_GATEWAY, "LLM_CALL_FAILED", msg.clone())
-            }
+            AppError::PayloadTooLarge { limit } => (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "PAYLOAD_TOO_LARGE",
+                format!("文件过大，最大 {limit} 字节"),
+            ),
+            AppError::PdfExtract(msg) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "PDF_EXTRACT_FAILED",
+                msg.clone(),
+            ),
+            AppError::LlmCall(msg) => (StatusCode::BAD_GATEWAY, "LLM_CALL_FAILED", msg.clone()),
             AppError::InvalidLlmOutput(msg) => {
                 (StatusCode::BAD_GATEWAY, "INVALID_LLM_OUTPUT", msg.clone())
             }
-            AppError::LlmNotConfigured => {
-                (StatusCode::SERVICE_UNAVAILABLE, "LLM_NOT_CONFIGURED", "未配置 OPENAI_API_KEY".into())
-            }
-            AppError::Database(msg) => {
-                (StatusCode::INTERNAL_SERVER_ERROR, "DATABASE_ERROR", msg.clone())
-            }
-            AppError::Io(e) => {
-                (StatusCode::INTERNAL_SERVER_ERROR, "IO_ERROR", e.to_string())
-            }
-            AppError::Internal(e) => {
-                (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR", e.to_string())
-            }
+            AppError::LlmNotConfigured => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "LLM_NOT_CONFIGURED",
+                "未配置 OPENAI_API_KEY".into(),
+            ),
+            AppError::Database(msg) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DATABASE_ERROR",
+                msg.clone(),
+            ),
+            AppError::Io(e) => (StatusCode::INTERNAL_SERVER_ERROR, "IO_ERROR", e.to_string()),
+            AppError::Internal(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL_ERROR",
+                e.to_string(),
+            ),
         };
 
         tracing::error!(code = code, status = %status, "请求失败: {message}");

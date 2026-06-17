@@ -18,8 +18,8 @@ pub fn extract_text(pdf_bytes: &[u8]) -> AppResult<ExtractResult> {
     let tmp_path = tmp_dir.join(format!("easypaper_{}.pdf", uuid::Uuid::new_v4()));
     std::fs::write(&tmp_path, pdf_bytes)?;
 
-    let full_text = pdf_extract::extract_text(&tmp_path)
-        .map_err(|e| AppError::PdfExtract(e.to_string()))?;
+    let full_text =
+        pdf_extract::extract_text(&tmp_path).map_err(|e| AppError::PdfExtract(e.to_string()))?;
 
     // 清理临时文件
     let _ = std::fs::remove_file(&tmp_path);
@@ -43,17 +43,16 @@ fn infer_metadata(text: &str) -> (String, Vec<String>) {
         .filter(|l| !l.is_empty())
         .collect();
 
-    // 找标题：第一个长度合理、不像编号/页眉的行
+    // 找标题：在 Abstract 之前选择最像标题的行，避免把页眉误判为标题。
+    let abstract_idx = head
+        .iter()
+        .position(|line| line.to_ascii_lowercase().starts_with("abstract"))
+        .unwrap_or(head.len());
     let title = head
         .iter()
-        .find(|l| {
-            let len = l.chars().count();
-            len >= 8 && len <= 200
-                && !l.starts_with("http")
-                && !l.contains("©")
-                && !l.starts_with("Abstract")
-                && !l.chars().next().is_some_and(|c| c.is_ascii_digit() && len < 30)
-        })
+        .take(abstract_idx)
+        .filter(|line| is_title_candidate(line))
+        .max_by_key(|line| title_score(line))
         .map(|s| s.to_string())
         .unwrap_or_else(|| "Untitled Paper".to_string());
 
@@ -64,9 +63,7 @@ fn infer_metadata(text: &str) -> (String, Vec<String>) {
         .skip(title_idx + 1)
         .take(8)
         .take_while(|l| {
-            !l.starts_with("Abstract")
-                && !l.starts_with("ABSTRACT")
-                && !l.contains("Abstract")
+            !l.starts_with("Abstract") && !l.starts_with("ABSTRACT") && !l.contains("Abstract")
         })
         .filter(|l| {
             // 作者行特征：包含逗号分隔的人名，或单个人名
@@ -85,6 +82,31 @@ fn infer_metadata(text: &str) -> (String, Vec<String>) {
         .collect();
 
     (title, authors)
+}
+
+fn is_title_candidate(line: &str) -> bool {
+    let len = line.chars().count();
+    (8..=200).contains(&len)
+        && !line.starts_with("http")
+        && !line.contains("©")
+        && !line
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_digit() && len < 30)
+}
+
+fn title_score(line: &&str) -> i32 {
+    let mut score = line.chars().count() as i32;
+    if line.contains(':') {
+        score += 40;
+    }
+    if line.contains(',') {
+        score -= 50;
+    }
+    if line.split_whitespace().count() <= 2 {
+        score -= 20;
+    }
+    score
 }
 
 #[cfg(test)]

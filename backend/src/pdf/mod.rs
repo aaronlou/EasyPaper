@@ -1,3 +1,3 @@
 pub mod extract;
 
-pub use extract::extract_text;
+pub use extract::{ExtractResult, extract_text};

@@ -1,0 +1,19 @@
+services:
+  easypaper:
+    image: ghcr.io/aaronlou/easypaper:latest
+    container_name: easypaper
+    restart: unless-stopped
+    env_file:
+      - ${EASYPAPER_ENV_FILE:-.env}
+    environment:
+      EASYPAPER_BIND_ADDR: 0.0.0.0:8787
+      EASYPAPER_DB_PATH: /data/easypaper.db
+      EASYPAPER_UPLOAD_DIR: /data/uploads
+      STATIC_DIR: /app/dist
+    ports:
+      - "8787:8787"
+    volumes:
+      - easypaper_data:/data
+
+volumes:
+  easypaper_data:

@@ -1,7 +1,8 @@
-use axum::Json;
+use axum::{Json, extract::State};
 use serde::Serialize;
 
 use crate::error::AppResult;
+use crate::interfaces::http::AppState;
 
 #[derive(Serialize)]
 pub struct HealthResponse {
@@ -13,13 +14,11 @@ pub struct HealthResponse {
 }
 
 /// GET /api/health
-pub async fn health(
-    axum::extract::State(state): axum::extract::State<crate::app::AppState>,
-) -> AppResult<Json<HealthResponse>> {
+pub async fn health(State(state): State<AppState>) -> AppResult<Json<HealthResponse>> {
     Ok(Json(HealthResponse {
         status: "ok",
         service: "easypaper-backend",
         version: env!("CARGO_PKG_VERSION"),
-        llm_configured: state.llm.is_configured(),
+        llm_configured: state.workflow.llm_is_configured(),
     }))
 }

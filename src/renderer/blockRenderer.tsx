@@ -11,6 +11,9 @@ import ComparisonBlock from "@/components/reader/ComparisonBlock";
 import QuizBlock from "@/components/reader/QuizBlock";
 import CodeFragmentBlock from "@/components/reader/CodeFragmentBlock";
 import CustomHtmlBlock from "@/components/reader/CustomHtmlBlock";
+import FigureBlock from "@/components/reader/FigureBlock";
+import ChartBlock from "@/components/reader/ChartBlock";
+import DiagramBlock from "@/components/reader/DiagramBlock";
 
 export function renderBlock(block: Block): React.ReactNode {
   switch (block.type) {
@@ -34,6 +37,12 @@ export function renderBlock(block: Block): React.ReactNode {
       return <CodeFragmentBlock block={block} />;
     case "custom_html":
       return <CustomHtmlBlock block={block} />;
+    case "figure":
+      return <FigureBlock block={block} />;
+    case "chart":
+      return <ChartBlock block={block} />;
+    case "diagram":
+      return <DiagramBlock block={block} />;
     default:
       return null;
   }

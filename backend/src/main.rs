@@ -1,14 +1,6 @@
 use tracing_subscriber::EnvFilter;
 
-mod app;
-mod config;
-mod error;
-mod llm;
-mod models;
-mod pdf;
-mod prompt;
-mod routes;
-mod store;
+use easypaper_backend::{app, config};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -18,9 +10,8 @@ async fn main() -> anyhow::Result<()> {
     // 初始化日志
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-                EnvFilter::new("easypaper_backend=info,tower_http=info")
-            }),
+            EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| EnvFilter::new("easypaper_backend=info,tower_http=info")),
         )
         .init();
 

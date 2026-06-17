@@ -19,8 +19,56 @@ Rust 后端 (axum)           React 前端 (Vite)
 
 ## 快速开始
 
+### Docker 一站式部署（推荐生产）
+
+项目提供单镜像部署：镜像内包含 React 静态资源和 Rust 后端，运行时只需要挂载 `/data` 持久化 SQLite 与上传目录。
+
+#### 服务器直接拉取 GitHub 镜像
+
+```bash
+mkdir -p easypaper && cd easypaper
+curl -fsSL https://raw.githubusercontent.com/aaronlou/EasyPaper/main/compose.yaml -o compose.yaml
+curl -fsSL https://raw.githubusercontent.com/aaronlou/EasyPaper/main/.env.docker.example -o .env
+
+# 编辑 .env，填入 OPENAI_API_KEY
+docker compose pull
+docker compose up -d
+```
+
+访问：
+
+- Web 产品：http://服务器IP:8787
+- 健康检查：http://服务器IP:8787/api/health
+
+如果 GHCR 镜像尚未设为 public，需要先登录：
+
+```bash
+echo YOUR_GITHUB_TOKEN | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
+```
+
+#### 本地构建镜像
+
+```bash
+docker build -t easypaper:local .
+cp .env.docker.example .env
+# 编辑 .env，填入 OPENAI_API_KEY
+docker compose up -d
+```
+
+#### GitHub 自动生成镜像
+
+推送到 `main` 或发布 `v*.*.*` tag 后，GitHub Actions 会构建并推送：
+
+```text
+ghcr.io/aaronlou/easypaper:latest
+ghcr.io/aaronlou/easypaper:<branch-or-tag>
+ghcr.io/aaronlou/easypaper:sha-<commit>
+```
+
+首次发布后，请在 GitHub 仓库的 Packages 页面确认镜像可见性；如果服务器不想配置 `docker login`，把 package visibility 设为 public。
+
 ### 前置要求
-- Rust ≥ 1.80（推荐 1.95+）
+- Rust ≥ 1.88（推荐 1.95+）
 - Node.js ≥ 18（推荐 22+）
 
 ### 1. 安装依赖
@@ -63,6 +111,8 @@ npm run build          # 前端 → dist/
 # 然后把 dist/ 丢给 axum 的静态文件托管
 ```
 
+Docker 镜像会自动执行这一步，并把 `dist/` 复制到运行镜像内的 `/app/dist`。
+
 ## 项目结构
 
 ```
@@ -71,14 +121,22 @@ EasyPaper/
 ├── package.json            # 前端 (React 19 + Vite 6 + Tailwind)
 ├── vite.config.ts          # /api → 127.0.0.1:8787 代理
 ├── .env.example            # 配置模板
+├── Dockerfile              # 前端 + 后端多阶段构建
+├── compose.yaml            # 服务器部署模板
+├── .github/workflows/
+│   └── docker-image.yml    # GHCR 镜像发布
 │
 ├── backend/                # Rust 后端 crate
 │   └── src/
-│       ├── main.rs         # 入口
-│       ├── app.rs          # AppState + Router
+│       ├── main.rs         # 二进制入口
+│       ├── lib.rs          # library crate 模块出口
+│       ├── app.rs          # composition root，装配依赖
+│       ├── domain/         # 领域模型与仓储/研究端口
+│       ├── application/    # 上传、解读、概念深潜等用例
+│       ├── infrastructure/ # Web 检索等基础设施适配器
+│       ├── interfaces/     # HTTP router + handlers
 │       ├── config.rs       # 环境变量配置
 │       ├── error.rs        # 错误处理
-│       ├── routes/         # API 路由 (health / upload / paper)
 │       ├── pdf/            # PDF 文本提取
 │       ├── llm/            # LLM 客户端 + 解读编排
 │       ├── prompt/         # Prompt 模板

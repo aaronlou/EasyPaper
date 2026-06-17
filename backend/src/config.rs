@@ -17,6 +17,12 @@ pub struct Config {
     pub db_path: PathBuf,
     /// 上传文件临时目录
     pub upload_dir: PathBuf,
+    /// 可选 Web 检索端点。支持 Tavily POST 或 SearXNG JSON GET。
+    pub web_search_url: Option<String>,
+    /// 可选 Web 检索 API Key（例如 Tavily）。
+    pub web_search_api_key: Option<String>,
+    /// 每个概念最多注入多少条外部检索结果。
+    pub web_search_max_results: usize,
 }
 
 impl Config {
@@ -30,7 +36,9 @@ impl Config {
         let bind_addr =
             std::env::var("EASYPAPER_BIND_ADDR").unwrap_or_else(|_| "127.0.0.1:8787".into());
 
-        let openai_api_key = std::env::var("OPENAI_API_KEY").ok().filter(|s| !s.is_empty());
+        let openai_api_key = std::env::var("OPENAI_API_KEY")
+            .ok()
+            .filter(|s| !s.is_empty());
 
         let openai_base_url =
             std::env::var("OPENAI_BASE_URL").unwrap_or_else(|_| "https://api.openai.com/v1".into());
@@ -44,18 +52,36 @@ impl Config {
             }
         });
 
-        let static_dir =
-            std::env::var("STATIC_DIR").map(PathBuf::from).unwrap_or_else(|_| {
-                workspace_root.join("dist")
+        let static_dir = std::env::var("STATIC_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| workspace_root.join("dist"));
+
+        let db_path = std::env::var("EASYPAPER_DB_PATH")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| workspace_root.join("data").join("easypaper.db"));
+
+        let upload_dir = std::env::var("EASYPAPER_UPLOAD_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| workspace_root.join("data").join("uploads"));
+
+        let web_search_api_key = std::env::var("EASYPAPER_WEB_SEARCH_API_KEY")
+            .ok()
+            .filter(|s| !s.is_empty());
+
+        let web_search_url = std::env::var("EASYPAPER_WEB_SEARCH_URL")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .or_else(|| {
+                web_search_api_key
+                    .as_ref()
+                    .map(|_| "https://api.tavily.com/search".to_string())
             });
 
-        let db_path = std::env::var("EASYPAPER_DB_PATH").map(PathBuf::from).unwrap_or_else(|_| {
-            workspace_root.join("data").join("easypaper.db")
-        });
-
-        let upload_dir = std::env::var("EASYPAPER_UPLOAD_DIR").map(PathBuf::from).unwrap_or_else(|_| {
-            workspace_root.join("data").join("uploads")
-        });
+        let web_search_max_results = std::env::var("EASYPAPER_WEB_SEARCH_MAX_RESULTS")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(4)
+            .clamp(1, 8);
 
         // 确保数据目录存在
         if let Some(parent) = db_path.parent() {
@@ -71,6 +97,9 @@ impl Config {
             static_dir,
             db_path,
             upload_dir,
+            web_search_url,
+            web_search_api_key,
+            web_search_max_results,
         })
     }
 }
