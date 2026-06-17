@@ -16,6 +16,9 @@ WORKDIR /app
 
 COPY Cargo.toml Cargo.lock ./
 COPY backend/Cargo.toml backend/Cargo.toml
+RUN mkdir -p backend/src \
+    && printf 'fn main() {}\n' > backend/src/main.rs \
+    && printf '' > backend/src/lib.rs
 RUN cargo fetch --locked
 
 COPY backend/src backend/src
