@@ -37,11 +37,43 @@ impl LlmClient {
     /// 调用 LLM 并期望返回 JSON（解析成 serde_json::Value）
     pub async fn call_json(&self, system: &str, user: &str) -> AppResult<Value> {
         let raw = self.call_text(system, user).await?;
-        parse_json_lenient(&raw).map_err(|e| AppError::InvalidLlmOutput(format!("{e}")))
+        match parse_json_lenient(&raw) {
+            Ok(value) => Ok(value),
+            Err(first_error) => {
+                tracing::warn!(
+                    "LLM JSON 首次解析失败，尝试自动修复: {first_error}; excerpt={}",
+                    error_excerpt(&raw, first_error.line(), first_error.column())
+                );
+                let repaired = self.repair_json(system, &raw, &first_error).await?;
+                parse_json_lenient(&repaired).map_err(|second_error| {
+                    AppError::InvalidLlmOutput(format!(
+                        "{second_error}; repair_failed_after={first_error}; excerpt={}",
+                        error_excerpt(&repaired, second_error.line(), second_error.column())
+                    ))
+                })
+            }
+        }
     }
 
     /// 调用 LLM 返回纯文本
     pub async fn call_text(&self, system: &str, user: &str) -> AppResult<String> {
+        let mut last_error = None;
+        for attempt in 1..=2 {
+            match self.call_text_once(system, user).await {
+                Ok(content) => return Ok(content),
+                Err(err) if attempt < 2 && err.is_retryable_llm_error() => {
+                    tracing::warn!("LLM 调用失败，将重试一次: {err}");
+                    last_error = Some(err);
+                    tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+                }
+                Err(err) => return Err(err),
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| AppError::LlmCall("LLM 调用失败".to_string())))
+    }
+
+    async fn call_text_once(&self, system: &str, user: &str) -> AppResult<String> {
         let api_key = self.api_key.as_ref().ok_or(AppError::LlmNotConfigured)?;
 
         let url = if self.uses_responses_api() {
@@ -88,10 +120,17 @@ impl LlmClient {
             )));
         }
 
-        let resp_json: Value = resp
-            .json()
+        let response_text = resp
+            .text()
             .await
-            .map_err(|e| AppError::LlmCall(format!("响应解析失败: {e}")))?;
+            .map_err(|e| AppError::LlmCall(format!("响应体读取失败: {e}")))?;
+
+        let resp_json: Value = serde_json::from_str(&response_text).map_err(|e| {
+            AppError::LlmCall(format!(
+                "响应 JSON 解析失败: {e}; body={}",
+                truncate(&response_text, 800)
+            ))
+        })?;
 
         // 兼容两种 API 的响应结构
         let content = if self.uses_responses_api() {
@@ -114,6 +153,24 @@ impl LlmClient {
         };
 
         Ok(content.to_string())
+    }
+
+    async fn repair_json(
+        &self,
+        original_system: &str,
+        raw_json: &str,
+        error: &serde_json::Error,
+    ) -> AppResult<String> {
+        let repair_system = "你是 JSON 修复器。你只修复语法错误，不改写字段含义，不新增解释文字。必须只输出一段严格合法的 JSON。";
+        let repair_user = format!(
+            "下面这段 JSON 由另一个模型生成，但解析失败。\n\
+             原始任务约束：\n{original_system}\n\n\
+             解析错误：{error}\n\n\
+             请只修复 JSON 语法，保持原有结构和内容，不要输出 markdown，不要输出解释。\n\n\
+             待修复 JSON：\n{raw_json}",
+        );
+
+        self.call_text(repair_system, &repair_user).await
     }
 }
 
@@ -138,6 +195,32 @@ fn truncate(s: &str, max: usize) -> String {
     } else {
         format!("{}...", &s[..max])
     }
+}
+
+fn error_excerpt(raw: &str, line: usize, column: usize) -> String {
+    let lines: Vec<&str> = raw.lines().collect();
+    if lines.is_empty() {
+        return truncate(raw, 240);
+    }
+
+    let line_index = line.saturating_sub(1).min(lines.len().saturating_sub(1));
+    let start = line_index.saturating_sub(2);
+    let end = (line_index + 3).min(lines.len());
+    let excerpt = lines[start..end]
+        .iter()
+        .enumerate()
+        .map(|(idx, text)| {
+            let current_line = start + idx + 1;
+            if current_line == line {
+                format!("{current_line}:{column}: {text}")
+            } else {
+                format!("{current_line}: {text}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    truncate(&excerpt, 800)
 }
 
 /// 占位类型让 #[derive(Deserialize)] 不被警告

@@ -147,6 +147,46 @@ impl PaperWorkflow {
         Ok((paper, interpretation))
     }
 
+    pub async fn retry_interpretation(&self, id: Uuid) -> AppResult<PaperSummary> {
+        let paper = self
+            .papers
+            .get_paper(id)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?
+            .ok_or_else(|| AppError::NotFound(format!("论文 {id} 不存在")))?;
+
+        if !self.llm.is_configured() {
+            return Err(AppError::LlmNotConfigured);
+        }
+
+        self.papers
+            .update_status(id, PaperStatus::Uploaded)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        self.update_progress(
+            id,
+            ProgressInfo::new(
+                "uploaded",
+                "重新排队",
+                "正在重新发起 AI 解读，这次会尝试自动修复模型返回的 JSON。",
+                10,
+            ),
+        )
+        .await;
+        self.spawn_interpretation(Paper {
+            status: PaperStatus::Uploaded,
+            completed_at: None,
+            ..paper.clone()
+        });
+
+        Ok(PaperSummary::from(Paper {
+            status: PaperStatus::Uploaded,
+            completed_at: None,
+            ..paper
+        }))
+    }
+
     pub async fn update_progress(&self, paper_id: Uuid, info: ProgressInfo) {
         let mut map = self.progress.write().await;
         map.insert(paper_id, info);
@@ -196,6 +236,7 @@ impl PaperWorkflow {
         let store = self.papers.clone();
         let interpreter = self.interpreter.clone();
         let progress = self.progress.clone();
+        let reader_progress_store = self.progress.clone();
         let paper_id = paper.id;
         let title = paper.title.clone();
         let text = paper.full_text.clone();
@@ -217,7 +258,7 @@ impl PaperWorkflow {
             update(ProgressInfo::new(
                 "interpreting",
                 "开始解读",
-                "正在构建 Prompt 并发送给 AI...",
+                "正在拆分论文，准备分配给多个阅读 agent...",
                 20,
             ))
             .await;
@@ -225,19 +266,45 @@ impl PaperWorkflow {
             tracing::info!(paper_id = %paper_id, "开始 LLM 解读");
 
             update(ProgressInfo::new(
-                "interpreting",
-                "AI 分析中",
-                "AI 正在阅读论文，提取核心贡献与关键概念...",
+                "reading",
+                "并行阅读中",
+                "多个 reader agents 正在分别阅读论文片段，提取概念、证据、数据和机制。",
                 35,
             ))
             .await;
 
-            match interpreter.interpret(paper_id, &title, &text).await {
+            let progress_for_readers = reader_progress_store.clone();
+            let reader_progress = move |done: usize, total: usize, label: String| {
+                let progress = progress_for_readers.clone();
+                async move {
+                    let percent = 35
+                        + ((done as f32 / total.max(1) as f32) * 35.0)
+                            .round()
+                            .clamp(0.0, 35.0) as u8;
+                    let mut map = progress.write().await;
+                    map.insert(
+                        paper_id,
+                        ProgressInfo::new(
+                            "reading",
+                            "并行阅读中",
+                            &format!(
+                                "已完成 {done}/{total} 个 reader agent：{label}。正在继续合并其余片段的理解。"
+                            ),
+                            percent,
+                        ),
+                    );
+                }
+            };
+
+            match interpreter
+                .interpret_with_progress(paper_id, &title, &text, reader_progress)
+                .await
+            {
                 Ok(interp) => {
                     update(ProgressInfo::new(
                         "parsing",
-                        "解析结果",
-                        "AI 返回完成，正在解析结构化讲解内容...",
+                        "多 Agent 汇总",
+                        "reader agents 已返回，正在用稳定 reducer 组装概念、图示、表格与自测题。",
                         80,
                     ))
                     .await;

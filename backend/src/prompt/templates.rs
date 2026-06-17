@@ -86,6 +86,66 @@ pub fn user_interpret(paper_title: &str, paper_text: &str) -> String {
     )
 }
 
+/// 并行阅读 Agent Prompt：只负责一个论文片段的短笔记。
+///
+/// 这比一次性要求模型吐完整页面 JSON 稳定得多：每个 agent 输出短结构，
+/// 解释器再用确定性 reducer 组装成 Block[]。
+pub const SYSTEM_ANALYZE_SLICE: &str = r#"你是一个论文阅读小组里的 specialist reader。你只阅读用户给你的一个论文片段，并产出短小、可合并、严格 JSON 的研究笔记。
+
+【输出 JSON 格式】
+{
+  "slice_focus": "这个片段主要在讲什么，20字内",
+  "summary": "这个片段对理解整篇论文最重要的一句话，中文，80字内",
+  "core_ideas": ["2-4条核心观点，每条60字内"],
+  "mechanisms": [
+    { "name": "机制/设计名", "input": "接收什么", "process": "如何处理", "output": "产出什么", "why": "为什么重要" }
+  ],
+  "concepts": [
+    { "term": "术语（保留英文名）", "definition": "50-90字通俗解释", "difficulty": "basic | intermediate | advanced", "related": ["相关术语"] }
+  ],
+  "evidence": [
+    { "claim": "一个可由原文支持的判断", "quote": "来自输入片段的短引文，30词以内", "cite": "Section/Figure/Table线索，可为空" }
+  ],
+  "stats": [
+    { "value": "原文中的数值表达", "label": "这个数字说明什么", "numeric_value": 123.0 }
+  ],
+  "comparisons": [
+    { "dimension": "对比维度", "baseline": "常见/旧做法", "paper_approach": "论文中的做法", "lesson": "读者应学到的取舍" }
+  ],
+  "quiz_questions": [
+    { "question": "检验理解的问题", "correct_answer": "正确答案", "distractors": ["干扰项1", "干扰项2"], "explanation": "为什么这样理解" }
+  ]
+}
+
+【要求】
+- 只输出 JSON，不要 markdown，不要解释 JSON 之外的内容
+- 所有说明用中文，论文专有名词保留英文
+- 不要生成 SVG、HTML、代码或整页文章；你只产短笔记
+- 每个数组最多 4 项；宁可少而准，不要编造
+- quote 必须来自用户给你的片段；如果没有明确证据，evidence 留空数组
+- numeric_value 只有能从数值直接看出时才填；不确定就设为 null
+- concepts 要服务于费曼式自学：定义必须让聪明的非专业读者能建立直觉"#;
+
+pub fn user_analyze_slice(
+    paper_title: &str,
+    slice_index: usize,
+    slice_count: usize,
+    slice_label: &str,
+    slice_text: &str,
+) -> String {
+    format!(
+        "论文标题：{title}\n\
+         片段：第 {index}/{count} 个阅读 agent，位置：{label}\n\n\
+         论文片段正文：\n{text}\n\n\
+         请只基于这个片段输出短 JSON 笔记。不要试图覆盖整篇论文。",
+        title = paper_title,
+        index = slice_index,
+        count = slice_count,
+        label = slice_label,
+        text = slice_text
+    )
+}
+
 /// 概念深潜 Prompt：基于论文原文和研究上下文，对单个概念做更深入讲解
 pub const SYSTEM_EXPAND_CONCEPT: &str = r#"你是一位擅长把学术概念讲透的导师，也是一位严谨的学术研究助理。用户正在阅读一篇论文，点击了其中一个关键概念，希望你能基于论文原文、参考文献线索和外部检索摘要给出更深入、更易懂、可追溯的讲解。
 

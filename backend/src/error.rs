@@ -36,6 +36,22 @@ pub enum AppError {
     Internal(#[from] anyhow::Error),
 }
 
+impl AppError {
+    pub fn is_retryable_llm_error(&self) -> bool {
+        match self {
+            AppError::LlmCall(message) => {
+                message.contains("HTTP 请求失败")
+                    || message.contains("响应体读取失败")
+                    || message.contains("响应 JSON 解析失败")
+                    || message.contains("error decoding response body")
+                    || message.contains("operation timed out")
+                    || message.contains("connection")
+            }
+            _ => false,
+        }
+    }
+}
+
 /// 统一的错误响应体
 #[derive(Serialize)]
 struct ErrorResponse {

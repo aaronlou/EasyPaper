@@ -18,6 +18,7 @@ interface PaperState {
   // 上传
   uploading: boolean;
   uploadPaper: (file: File) => Promise<string>; // returns paper id
+  retryInterpretation: (id: string) => Promise<string>;
 
   // 健康检查
   health: { llm_configured: boolean } | null;
@@ -60,6 +61,12 @@ export const usePaperStore = create<PaperState>((set, get) => ({
     } finally {
       set({ uploading: false });
     }
+  },
+
+  retryInterpretation: async (id) => {
+    const res = await api.retryInterpretation(id);
+    await get().loadPapers();
+    return res.paper.id;
   },
 
   health: null,

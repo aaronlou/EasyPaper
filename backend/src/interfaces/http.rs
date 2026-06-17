@@ -45,6 +45,10 @@ fn api_router(state: AppState) -> Router {
         .route("/papers", get(handlers::paper::list_papers))
         .route("/papers/{id}", get(handlers::paper::get_paper))
         .route(
+            "/papers/{id}/retry",
+            post(handlers::paper::retry_interpretation),
+        )
+        .route(
             "/papers/{id}/progress",
             get(handlers::progress::get_progress),
         )

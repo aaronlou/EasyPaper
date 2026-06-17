@@ -57,6 +57,12 @@ export async function getProgress(id: string): Promise<ProgressInfo> {
   return request(`/papers/${id}/progress`);
 }
 
+export async function retryInterpretation(id: string): Promise<UploadResponse> {
+  return request(`/papers/${id}/retry`, {
+    method: "POST",
+  });
+}
+
 export async function expandConcept(
   paperId: string,
   conceptId: string,

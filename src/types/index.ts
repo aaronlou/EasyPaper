@@ -175,7 +175,14 @@ export interface UploadResponse {
 // ── Progress ───────────────────────
 
 export interface ProgressInfo {
-  phase: "uploaded" | "interpreting" | "parsing" | "saving" | "completed" | "failed";
+  phase:
+    | "uploaded"
+    | "interpreting"
+    | "reading"
+    | "parsing"
+    | "saving"
+    | "completed"
+    | "failed";
   stage: string;
   message: string;
   percent: number;

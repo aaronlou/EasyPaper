@@ -12,20 +12,27 @@ interface Props {
 
 const STEPS = [
   { phase: "uploaded", label: "文本提取", desc: "从 PDF 提取标题、作者与正文" },
-  { phase: "interpreting", label: "结构分析", desc: "AI 理解论文框架与核心贡献" },
-  { phase: "interpreting", label: "讲解生成", desc: "把专业内容转写成通俗讲解" },
-  { phase: "parsing", label: "结果整理", desc: "解析并校验结构化输出" },
+  { phase: "reading", label: "并行阅读", desc: "多个 reader agent 分片理解论文" },
+  { phase: "reading", label: "多 Agent 汇总", desc: "合并概念、证据与机制笔记" },
+  { phase: "parsing", label: "结构化解析", desc: "组装图示、表格与自测题" },
   { phase: "saving", label: "页面准备", desc: "写入数据库并渲染阅读器" },
 ];
 
-const INTERPRETING_MESSAGES = [
-  "正在阅读摘要与引言...",
-  "正在提取核心贡献与创新点...",
-  "正在梳理关键技术细节...",
-  "正在把专业术语翻译成通俗语言...",
-  "正在设计概念卡片与自测题目...",
-  "正在润色讲解表达...",
+const SUPPORTING_MESSAGES = [
+  "阅读 agent 正在各自提炼核心观点...",
+  "结构 agent 正在检查机制链路是否讲得通...",
+  "讲解 agent 正在把术语转成可复述的直觉...",
+  "证据 agent 正在保留论文中的关键数字与引用...",
+  "Reducer 正在准备图示、概念卡和自测题...",
 ];
+
+type AgentLaneStatus = "waiting" | "active" | "done";
+
+interface AgentLane {
+  label: string;
+  detail: string;
+  status: AgentLaneStatus;
+}
 
 function formatElapsed(seconds: number): string {
   if (seconds < 60) return `${seconds} 秒`;
@@ -35,10 +42,12 @@ function formatElapsed(seconds: number): string {
 }
 
 export default function ProcessingView({ paperId, onDone, onBack, onOpenReader }: Props) {
-  const { current, papers, loadPaper, loadPapers } = usePaperStore();
+  const { current, papers, loadPaper, loadPapers, retryInterpretation } = usePaperStore();
   const doneCalled = useRef(false);
   const onDoneRef = useRef(onDone);
   const [progress, setProgress] = useState<ProgressInfo | null>(null);
+  const [retrying, setRetrying] = useState(false);
+  const [retryError, setRetryError] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [startAt] = useState(() => Date.now());
 
@@ -117,8 +126,8 @@ export default function ProcessingView({ paperId, onDone, onBack, onOpenReader }
       case "uploaded":
         return 0;
       case "interpreting":
-        // 在 interpreting 阶段根据已用时间或 percent 细分两步
-        return (progress?.percent ?? 35) < 50 ? 1 : 2;
+      case "reading":
+        return (progress?.percent ?? 35) < 60 ? 1 : 2;
       case "parsing":
         return 3;
       case "saving":
@@ -129,12 +138,45 @@ export default function ProcessingView({ paperId, onDone, onBack, onOpenReader }
     }
   }, [phase, progress?.percent]);
 
-  // interpreting 阶段的动态文案
+  // 后端实时进度为主，本地轮播只做辅助，避免覆盖真实 reader agent 状态。
   const dynamicMessage = useMemo(() => {
-    if (phase !== "interpreting") return progress?.message ?? "";
-    const idx = Math.floor(elapsed / 7) % INTERPRETING_MESSAGES.length;
-    return INTERPRETING_MESSAGES[idx];
+    if (progress?.message) return progress.message;
+    const idx = Math.floor(elapsed / 7) % SUPPORTING_MESSAGES.length;
+    return SUPPORTING_MESSAGES[idx];
   }, [phase, progress?.message, elapsed]);
+
+  const helperMessage = useMemo(() => {
+    if (phase !== "interpreting" && phase !== "reading") return "";
+    const idx = Math.floor(elapsed / 7) % SUPPORTING_MESSAGES.length;
+    return SUPPORTING_MESSAGES[idx];
+  }, [phase, elapsed]);
+
+  const agentLanes = useMemo<AgentLane[]>(() => {
+    const percent = progress?.percent ?? 10;
+    const makeStatus = (activeAt: number, doneAt: number): AgentLaneStatus => {
+      if (percent >= doneAt || phase === "completed" || phase === "saving") return "done";
+      if (percent >= activeAt) return "active";
+      return "waiting";
+    };
+
+    return [
+      {
+        label: "Reader Agents",
+        detail: "分片阅读、提取概念与证据",
+        status: makeStatus(20, 72),
+      },
+      {
+        label: "Structure Agent",
+        detail: "整理问题、机制、取舍链路",
+        status: makeStatus(45, 82),
+      },
+      {
+        label: "Teaching Agent",
+        detail: "生成费曼式图示、表格与自测",
+        status: makeStatus(55, 90),
+      },
+    ];
+  }, [phase, progress?.percent]);
 
   const isFailed = status === "failed" || phase === "failed";
   const completedAlternatives = papers.filter(
@@ -144,6 +186,19 @@ export default function ProcessingView({ paperId, onDone, onBack, onOpenReader }
       current?.paper.title &&
       paper.title === current.paper.title,
   );
+
+  const handleRetry = async () => {
+    setRetrying(true);
+    setRetryError(null);
+    try {
+      await retryInterpretation(paperId);
+      await loadPaper(paperId);
+    } catch (error) {
+      setRetryError(error instanceof Error ? error.message : "重新解读失败");
+    } finally {
+      setRetrying(false);
+    }
+  };
 
   return (
     <main className="max-w-2xl mx-auto px-6 py-20 text-center">
@@ -155,7 +210,18 @@ export default function ProcessingView({ paperId, onDone, onBack, onOpenReader }
             {progress?.message ||
               "请检查 LLM 配置（OPENAI_API_KEY），或确保 PDF 文本可读。"}
           </p>
+          {retryError && (
+            <p className="mt-3 text-sm text-red-700">{retryError}</p>
+          )}
           <div className="mt-6 flex flex-wrap justify-center gap-3">
+            <button
+              type="button"
+              onClick={handleRetry}
+              disabled={retrying}
+              className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {retrying ? "正在重试..." : "重新解读"}
+            </button>
             <button
               type="button"
               onClick={onBack}
@@ -189,7 +255,15 @@ export default function ProcessingView({ paperId, onDone, onBack, onOpenReader }
             <span className="inline-block w-14 h-14 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-5" />
             <h2 className="text-2xl font-semibold text-gray-800 mb-2">AI 正在解读</h2>
             <p className="text-gray-600 font-medium mb-1">{title}</p>
+            {progress?.stage && (
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                当前阶段：{progress.stage}
+              </p>
+            )}
             <p className="text-blue-600 text-sm min-h-[1.5rem]">{dynamicMessage}</p>
+            {helperMessage && helperMessage !== dynamicMessage && (
+              <p className="mt-1 text-xs text-gray-400">{helperMessage}</p>
+            )}
           </div>
 
           {/* 进度条 */}
@@ -205,8 +279,38 @@ export default function ProcessingView({ paperId, onDone, onBack, onOpenReader }
               />
             </div>
             <p className="text-xs text-gray-400 mt-3">
-              已用时 {formatElapsed(elapsed)} · 通常需要 30 秒 ~ 2 分钟
+              已用时 {formatElapsed(elapsed)} · 并行阅读通常需要 30 秒 ~ 2 分钟
             </p>
+          </div>
+
+          <div className="mb-10 grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm sm:grid-cols-3">
+            {agentLanes.map((lane) => (
+              <div key={lane.label} className="min-w-0 rounded-lg bg-slate-50 p-3">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <span className="truncate text-xs font-semibold text-slate-700">
+                    {lane.label}
+                  </span>
+                  <span
+                    className={[
+                      "h-2.5 w-2.5 rounded-full",
+                      lane.status === "done"
+                        ? "bg-emerald-500"
+                        : lane.status === "active"
+                        ? "bg-blue-500 animate-pulse"
+                        : "bg-slate-300",
+                    ].join(" ")}
+                  />
+                </div>
+                <p className="text-xs leading-5 text-slate-500">{lane.detail}</p>
+                <p className="mt-2 text-[11px] font-medium text-slate-400">
+                  {lane.status === "done"
+                    ? "完成"
+                    : lane.status === "active"
+                    ? "处理中"
+                    : "等待中"}
+                </p>
+              </div>
+            ))}
           </div>
 
           {/* 步骤条 */}
