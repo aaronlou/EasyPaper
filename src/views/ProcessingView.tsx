@@ -6,6 +6,8 @@ import type { ProgressInfo } from "@/types";
 interface Props {
   paperId: string;
   onDone: () => void;
+  onBack: () => void;
+  onOpenReader: (paperId: string) => void;
 }
 
 const STEPS = [
@@ -32,8 +34,8 @@ function formatElapsed(seconds: number): string {
   return s === 0 ? `${m} 分钟` : `${m} 分 ${s} 秒`;
 }
 
-export default function ProcessingView({ paperId, onDone }: Props) {
-  const { current, loadPaper } = usePaperStore();
+export default function ProcessingView({ paperId, onDone, onBack, onOpenReader }: Props) {
+  const { current, papers, loadPaper, loadPapers } = usePaperStore();
   const doneCalled = useRef(false);
   const onDoneRef = useRef(onDone);
   const [progress, setProgress] = useState<ProgressInfo | null>(null);
@@ -52,6 +54,7 @@ export default function ProcessingView({ paperId, onDone }: Props) {
     const poll = async () => {
       if (!active) return;
       await loadPaper(paperId);
+      await loadPapers();
     };
 
     poll();
@@ -61,7 +64,7 @@ export default function ProcessingView({ paperId, onDone }: Props) {
       active = false;
       clearInterval(timer);
     };
-  }, [paperId, loadPaper]);
+  }, [paperId, loadPaper, loadPapers]);
 
   // 轮询进度
   useEffect(() => {
@@ -134,17 +137,43 @@ export default function ProcessingView({ paperId, onDone }: Props) {
   }, [phase, progress?.message, elapsed]);
 
   const isFailed = status === "failed" || phase === "failed";
+  const completedAlternatives = papers.filter(
+    (paper) =>
+      paper.status === "completed" &&
+      paper.id !== paperId &&
+      current?.paper.title &&
+      paper.title === current.paper.title,
+  );
 
   return (
     <main className="max-w-2xl mx-auto px-6 py-20 text-center">
       {isFailed ? (
         <div className="rounded-2xl bg-red-50 p-8">
-          <span className="text-5xl mb-4 inline-block">⚠️</span>
           <h2 className="text-2xl font-semibold text-red-700 mb-2">解读失败</h2>
           <p className="text-gray-700 font-medium mb-1">{title}</p>
           <p className="text-gray-500 text-sm mt-2">
-            {progress?.message || "请检查 LLM 配置（OPENAI_API_KEY），或确保 PDF 文本可读。"}
+            {progress?.message ||
+              "请检查 LLM 配置（OPENAI_API_KEY），或确保 PDF 文本可读。"}
           </p>
+          <div className="mt-6 flex flex-wrap justify-center gap-3">
+            <button
+              type="button"
+              onClick={onBack}
+              className="rounded-lg border border-red-200 bg-white px-4 py-2 text-sm font-medium text-red-700 transition hover:bg-red-100"
+            >
+              返回列表
+            </button>
+            {completedAlternatives.map((paper) => (
+              <button
+                key={paper.id}
+                type="button"
+                onClick={() => onOpenReader(paper.id)}
+                className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-700"
+              >
+                打开历史已完成解读
+              </button>
+            ))}
+          </div>
         </div>
       ) : status === "completed" ? (
         <div className="rounded-2xl bg-green-50 p-8">

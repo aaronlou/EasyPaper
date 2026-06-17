@@ -10,8 +10,8 @@ use crate::models::api::ProgressInfo;
 
 /// GET /api/papers/:id/progress  —— 获取论文解读进度
 ///
-/// 如果内存中没有该论文的进度记录，返回一个默认的“处理中”状态，
-/// 这样前端在上传后能立即看到步骤条，而不必等待第一次 emit。
+/// 如果内存中没有该论文的进度记录，会从数据库状态推导一个兜底进度，
+/// 避免服务重启后遗留的 processing 论文在前端永久转圈。
 pub async fn get_progress(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,

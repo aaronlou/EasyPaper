@@ -45,6 +45,23 @@ impl PaperWorkflow {
         self.llm.is_configured()
     }
 
+    pub async fn recover_interrupted_work(&self) -> AppResult<()> {
+        let affected = self
+            .papers
+            .mark_interrupted_processing_as_failed()
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        if affected > 0 {
+            tracing::warn!(
+                affected,
+                "检测到服务重启前遗留的 processing 论文，已标记为 failed"
+            );
+        }
+
+        Ok(())
+    }
+
     pub async fn register_extracted_paper(
         &self,
         filename: String,
@@ -137,7 +154,42 @@ impl PaperWorkflow {
 
     pub async fn get_progress(&self, paper_id: Uuid) -> Option<ProgressInfo> {
         let map = self.progress.read().await;
-        map.get(&paper_id).cloned()
+        if let Some(info) = map.get(&paper_id).cloned() {
+            return Some(info);
+        }
+        drop(map);
+
+        let paper = match self.papers.get_paper(paper_id).await {
+            Ok(Some(paper)) => paper,
+            _ => return None,
+        };
+
+        Some(match paper.status {
+            PaperStatus::Uploaded => ProgressInfo::new(
+                "uploaded",
+                "等待解读",
+                "论文已保存，正在等待 AI 解读任务启动。",
+                10,
+            ),
+            PaperStatus::Processing => ProgressInfo::new(
+                "interpreting",
+                "解读恢复中",
+                "服务没有找到该任务的实时进度。如果此状态持续不变，请重新上传或打开已完成的历史解读。",
+                35,
+            ),
+            PaperStatus::Completed => ProgressInfo::new(
+                "completed",
+                "解读完成",
+                "解读结果已保存，可以打开交互式讲解页面。",
+                100,
+            ),
+            PaperStatus::Failed => ProgressInfo::new(
+                "failed",
+                "解读中断",
+                "这次解读任务没有完成，可能是服务重启、LLM 调用超时或返回格式异常。请重新上传，或打开历史已完成版本。",
+                0,
+            ),
+        })
     }
 
     fn spawn_interpretation(&self, paper: Paper) {

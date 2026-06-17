@@ -35,6 +35,7 @@ pub async fn build(config: Config) -> anyhow::Result<axum::Router> {
         research.clone(),
         progress.clone(),
     );
+    workflow.recover_interrupted_work().await?;
 
     let state = AppState { workflow };
 

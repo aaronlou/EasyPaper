@@ -13,6 +13,7 @@ pub trait PaperRepository: Send + Sync + 'static {
     async fn get_paper(&self, id: uuid::Uuid) -> anyhow::Result<Option<Paper>>;
     async fn list_papers(&self) -> anyhow::Result<Vec<PaperSummary>>;
     async fn update_status(&self, id: uuid::Uuid, status: PaperStatus) -> anyhow::Result<()>;
+    async fn mark_interrupted_processing_as_failed(&self) -> anyhow::Result<u64>;
     async fn save_interpretation(&self, interp: &Interpretation) -> anyhow::Result<()>;
     async fn get_interpretation(
         &self,

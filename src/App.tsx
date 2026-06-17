@@ -28,6 +28,11 @@ export default function App() {
     setView("reader");
   }, []);
 
+  const handleOpenPaper = useCallback((paperId: string, status?: string) => {
+    setCurrentPaperId(paperId);
+    setView(status === "completed" ? "reader" : "processing");
+  }, []);
+
   const handleBackToUpload = useCallback(() => {
     setView("upload");
     setCurrentPaperId(null);
@@ -52,12 +57,14 @@ export default function App() {
 
       {/* 视图切换 */}
       {view === "upload" && (
-        <UploadView onDone={handleUploadComplete} />
+        <UploadView onDone={handleUploadComplete} onOpenPaper={handleOpenPaper} />
       )}
       {view === "processing" && currentPaperId && (
         <ProcessingView
           paperId={currentPaperId}
           onDone={() => handleProcessingDone(currentPaperId)}
+          onBack={handleBackToUpload}
+          onOpenReader={(paperId) => handleProcessingDone(paperId)}
         />
       )}
       {view === "reader" && currentPaperId && (

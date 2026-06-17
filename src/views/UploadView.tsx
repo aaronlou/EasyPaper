@@ -6,9 +6,10 @@ import type { PaperSummary } from "@/types";
 
 interface Props {
   onDone: (paperId: string) => void;
+  onOpenPaper: (paperId: string, status: PaperSummary["status"]) => void;
 }
 
-export default function UploadView({ onDone }: Props) {
+export default function UploadView({ onDone, onOpenPaper }: Props) {
   const { papers, loadPapers, uploading, uploadPaper, health } =
     usePaperStore();
   const [error, setError] = useState<string | null>(null);
@@ -53,9 +54,7 @@ export default function UploadView({ onDone }: Props) {
   );
 
   const handleClick = (p: PaperSummary) => {
-    if (p.status === "completed") {
-      onDone(p.id);
-    }
+    onOpenPaper(p.id, p.status);
   };
 
   const statusIcon = (s: PaperSummary["status"]) => {
@@ -152,9 +151,7 @@ export default function UploadView({ onDone }: Props) {
                 onClick={() => handleClick(p)}
                 className={cn(
                   "flex items-center gap-4 p-4 rounded-lg border bg-white transition-colors",
-                  p.status === "completed"
-                    ? "cursor-pointer hover:border-blue-400 hover:bg-blue-50/30"
-                    : "cursor-default",
+                  "cursor-pointer hover:border-blue-400 hover:bg-blue-50/30",
                 )}
               >
                 <FileText className="w-5 h-5 text-gray-400 shrink-0" />

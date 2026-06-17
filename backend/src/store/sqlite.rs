@@ -151,6 +151,19 @@ impl PaperRepository for SqliteStore {
         Ok(())
     }
 
+    async fn mark_interrupted_processing_as_failed(&self) -> anyhow::Result<u64> {
+        let result = sqlx::query(
+            "UPDATE papers
+             SET status = 'failed'
+             WHERE status = 'processing'
+               AND id NOT IN (SELECT paper_id FROM interpretations)",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected())
+    }
+
     async fn save_interpretation(&self, interp: &Interpretation) -> anyhow::Result<()> {
         let json = serde_json::to_string(interp)?;
         let concepts_json = serde_json::to_string(&interp.concepts)?;
