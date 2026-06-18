@@ -18,6 +18,20 @@ impl PaperWorkflow {
         paper_id: Uuid,
         concept_id: String,
     ) -> AppResult<ConceptExpansion> {
+        if let Some(cached) = self
+            .concept_expansions
+            .get_concept_expansion(paper_id, &concept_id, self.concept_cache_ttl_days)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?
+        {
+            tracing::info!(
+                paper_id = %paper_id,
+                concept_id = %concept_id,
+                "命中概念深潜缓存"
+            );
+            return Ok(cached);
+        }
+
         let paper = self
             .papers
             .get_paper(paper_id)
@@ -63,16 +77,16 @@ impl PaperWorkflow {
             return Err(AppError::LlmNotConfigured);
         }
 
-        let paper_context = build_concept_context(&paper.full_text, &term, &definition);
+        let paper_context = build_concept_context(paper.full_text(), &term, &definition);
         let reference_candidates =
-            extract_reference_candidates(&paper.full_text, &term, &definition);
+            extract_reference_candidates(paper.full_text(), &term, &definition);
         let reference_context = format_reference_context(&reference_candidates);
-        let search_query = build_search_query(&paper.title, &term);
+        let search_query = build_search_query(paper.title(), &term);
         let web_results = self.research.search(&search_query).await;
         let web_context = format_web_context(&web_results);
 
         let user_msg = prompt::user_expand_concept(
-            &paper.title,
+            paper.title(),
             &term,
             &definition,
             &paper_context,
@@ -96,7 +110,59 @@ impl PaperWorkflow {
             &search_query,
         );
 
+        self.concept_expansions
+            .save_concept_expansion(paper_id, &concept_id, &expansion)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
         Ok(expansion)
+    }
+
+    pub(super) fn spawn_concept_prewarm(&self, paper_id: Uuid) {
+        if self.concept_prewarm_limit == 0 || !self.llm.is_configured() {
+            return;
+        }
+
+        let workflow = self.clone();
+        tokio::spawn(async move {
+            let interpretation = match workflow.papers.get_interpretation(paper_id).await {
+                Ok(Some(interpretation)) => interpretation,
+                Ok(None) => return,
+                Err(err) => {
+                    tracing::warn!(paper_id = %paper_id, "概念预热读取解读失败: {err}");
+                    return;
+                }
+            };
+
+            let concept_ids = interpretation
+                .concepts
+                .iter()
+                .take(workflow.concept_prewarm_limit)
+                .map(|concept| concept.id.clone())
+                .collect::<Vec<_>>();
+
+            if concept_ids.is_empty() {
+                return;
+            }
+
+            tracing::info!(
+                paper_id = %paper_id,
+                count = concept_ids.len(),
+                "开始后台预热概念深潜缓存"
+            );
+
+            for concept_id in concept_ids {
+                if let Err(err) = workflow.expand_concept(paper_id, concept_id.clone()).await {
+                    tracing::warn!(
+                        paper_id = %paper_id,
+                        concept_id = %concept_id,
+                        "概念深潜预热失败: {err}"
+                    );
+                }
+            }
+
+            tracing::info!(paper_id = %paper_id, "后台概念深潜缓存预热完成");
+        });
     }
 }
 

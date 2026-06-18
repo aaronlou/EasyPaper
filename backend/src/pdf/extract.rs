@@ -1,18 +1,11 @@
+use crate::application::ports::{ExtractedPaperText, PdfExtractor};
 use crate::error::{AppError, AppResult};
-
-/// PDF 文本提取结果
-#[derive(Debug, Clone)]
-pub struct ExtractResult {
-    pub full_text: String,
-    pub title: String,
-    pub authors: Vec<String>,
-}
 
 /// 从 PDF 字节流提取文本 + 启发式推断标题/作者
 ///
 /// pdf-extract 0.7 只接受文件路径（AsRef<Path>），所以先把 bytes
 /// 写入临时文件，提取完再删除。
-pub fn extract_text(pdf_bytes: &[u8]) -> AppResult<ExtractResult> {
+pub fn extract_text(pdf_bytes: &[u8]) -> AppResult<ExtractedPaperText> {
     // 写到临时文件
     let tmp_dir = std::env::temp_dir();
     let tmp_path = tmp_dir.join(format!("easypaper_{}.pdf", uuid::Uuid::new_v4()));
@@ -27,11 +20,21 @@ pub fn extract_text(pdf_bytes: &[u8]) -> AppResult<ExtractResult> {
     // 启发式：从文本头部推断标题和作者
     let (title, authors) = infer_metadata(&full_text);
 
-    Ok(ExtractResult {
+    Ok(ExtractedPaperText {
         full_text,
         title,
         authors,
     })
+}
+
+#[derive(Clone)]
+pub struct PdfExtractAdapter;
+
+#[async_trait::async_trait]
+impl PdfExtractor for PdfExtractAdapter {
+    async fn extract(&self, pdf_bytes: &[u8]) -> AppResult<ExtractedPaperText> {
+        extract_text(pdf_bytes)
+    }
 }
 
 /// 极简启发式：取第一页前若干非空行作为标题候选，过滤掉常见的页眉/版权行

@@ -1,5 +1,6 @@
 use axum::{
     Router,
+    extract::DefaultBodyLimit,
     routing::{get, post},
 };
 use tower_http::{cors::CorsLayer, services::ServeDir, trace::TraceLayer};
@@ -56,5 +57,8 @@ fn api_router(state: AppState) -> Router {
             "/papers/{id}/concepts/{concept_id}/expand",
             post(handlers::concepts::expand_concept),
         )
+        .layer(DefaultBodyLimit::max(
+            handlers::upload::MAX_PDF_SIZE + 1024 * 1024,
+        ))
         .with_state(state)
 }

@@ -23,6 +23,10 @@ pub struct Config {
     pub web_search_api_key: Option<String>,
     /// 每个概念最多注入多少条外部检索结果。
     pub web_search_max_results: usize,
+    /// 解读完成后后台预热多少个概念深潜结果。0 表示关闭。
+    pub concept_prewarm_limit: usize,
+    /// 概念深潜缓存保留天数。
+    pub concept_cache_ttl_days: i64,
 }
 
 impl Config {
@@ -83,6 +87,18 @@ impl Config {
             .unwrap_or(4)
             .clamp(1, 8);
 
+        let concept_prewarm_limit = std::env::var("EASYPAPER_CONCEPT_PREWARM_LIMIT")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(3)
+            .min(8);
+
+        let concept_cache_ttl_days = std::env::var("EASYPAPER_CONCEPT_CACHE_TTL_DAYS")
+            .ok()
+            .and_then(|s| s.parse::<i64>().ok())
+            .unwrap_or(7)
+            .clamp(1, 90);
+
         // 确保数据目录存在
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent).ok();
@@ -100,6 +116,8 @@ impl Config {
             web_search_url,
             web_search_api_key,
             web_search_max_results,
+            concept_prewarm_limit,
+            concept_cache_ttl_days,
         })
     }
 }

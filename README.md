@@ -89,6 +89,11 @@ cp .env.example .env
 # 也支持 DeepSeek 等 OpenAI 兼容 API
 ```
 
+可选缓存策略：
+
+- `EASYPAPER_CONCEPT_PREWARM_LIMIT=3`：论文解读完成后，后台预热前 N 个概念深潜结果；设为 `0` 可关闭。
+- `EASYPAPER_CONCEPT_CACHE_TTL_DAYS=7`：概念深潜缓存保留天数；过期缓存会在服务启动时清理。
+
 ### 3. 启动开发
 
 ```bash

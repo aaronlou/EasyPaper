@@ -8,6 +8,7 @@ use crate::domain::interpretation::Interpretation;
 use crate::domain::paper::{Paper, PaperStatus, PaperSummary};
 use crate::domain::repositories::PaperRepository;
 use crate::error::AppError;
+use crate::{application::ports::ConceptExpansionCache, models::api::ConceptExpansion};
 
 /// SQLite 实现。用 sqlx 连接池
 #[derive(Clone)]
@@ -35,22 +36,51 @@ impl SqliteStore {
 #[async_trait]
 impl PaperRepository for SqliteStore {
     async fn insert_paper(&self, paper: &Paper) -> anyhow::Result<()> {
-        let authors_json = serde_json::to_string(&paper.authors)?;
-        let status_str = format!("{:?}", paper.status).to_lowercase();
+        let authors_json = serde_json::to_string(paper.authors())?;
 
         sqlx::query(
             "INSERT INTO papers (id, filename, title, authors, full_text, char_count, status, created_at, completed_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         )
-        .bind(paper.id.to_string())
-        .bind(&paper.filename)
-        .bind(&paper.title)
+        .bind(paper.id().to_string())
+        .bind(paper.filename())
+        .bind(paper.title())
         .bind(&authors_json)
-        .bind(&paper.full_text)
-        .bind(paper.char_count as i64)
-        .bind(&status_str)
-        .bind(&paper.created_at)
-        .bind(&paper.completed_at)
+        .bind(paper.full_text())
+        .bind(paper.char_count() as i64)
+        .bind(paper.status().as_str())
+        .bind(paper.created_at())
+        .bind(paper.completed_at())
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    async fn save_paper(&self, paper: &Paper) -> anyhow::Result<()> {
+        let authors_json = serde_json::to_string(paper.authors())?;
+
+        sqlx::query(
+            "UPDATE papers
+             SET filename = ?1,
+                 title = ?2,
+                 authors = ?3,
+                 full_text = ?4,
+                 char_count = ?5,
+                 status = ?6,
+                 created_at = ?7,
+                 completed_at = ?8
+             WHERE id = ?9",
+        )
+        .bind(paper.filename())
+        .bind(paper.title())
+        .bind(&authors_json)
+        .bind(paper.full_text())
+        .bind(paper.char_count() as i64)
+        .bind(paper.status().as_str())
+        .bind(paper.created_at())
+        .bind(paper.completed_at())
+        .bind(paper.id().to_string())
         .execute(&self.pool)
         .await?;
 
@@ -58,7 +88,7 @@ impl PaperRepository for SqliteStore {
     }
 
     async fn get_paper(&self, id: Uuid) -> anyhow::Result<Option<Paper>> {
-        let row = sqlx::query("SELECT filename, title, authors, full_text, status, char_count, created_at, completed_at FROM papers WHERE id = ?1")
+        let row = sqlx::query("SELECT filename, title, authors, full_text, status, created_at, completed_at FROM papers WHERE id = ?1")
             .bind(id.to_string())
             .fetch_optional(&self.pool)
             .await?;
@@ -73,30 +103,22 @@ impl PaperRepository for SqliteStore {
         let authors_json: String = row.get(2);
         let full_text: String = row.get(3);
         let status_str: String = row.get(4);
-        let char_count: i64 = row.get(5);
-        let created_at: String = row.get(6);
-        let completed_at: Option<String> = row.get(7);
+        let created_at: String = row.get(5);
+        let completed_at: Option<String> = row.get(6);
 
         let authors: Vec<String> = serde_json::from_str(&authors_json).unwrap_or_default();
-        let status = match status_str.as_str() {
-            "uploaded" => PaperStatus::Uploaded,
-            "processing" => PaperStatus::Processing,
-            "completed" => PaperStatus::Completed,
-            "failed" => PaperStatus::Failed,
-            _ => PaperStatus::Uploaded,
-        };
+        let status = PaperStatus::from_str(&status_str)?;
 
-        Ok(Some(Paper {
+        Ok(Some(Paper::rehydrate(
             id,
             filename,
             title,
             authors,
             full_text,
-            char_count: char_count as usize,
             status,
             created_at,
             completed_at,
-        }))
+        )))
     }
 
     async fn list_papers(&self) -> anyhow::Result<Vec<PaperSummary>> {
@@ -110,17 +132,11 @@ impl PaperRepository for SqliteStore {
         let mut out = Vec::new();
         for row in rows {
             let id_str: String = row.get(0);
-            let id = Uuid::parse_str(&id_str).unwrap_or_else(|_| Uuid::new_v4());
+            let id = Uuid::parse_str(&id_str)?;
             let authors_json: String = row.get(3);
             let authors: Vec<String> = serde_json::from_str(&authors_json).unwrap_or_default();
             let status_str: String = row.get(5);
-            let status = match status_str.as_str() {
-                "uploaded" => PaperStatus::Uploaded,
-                "processing" => PaperStatus::Processing,
-                "completed" => PaperStatus::Completed,
-                "failed" => PaperStatus::Failed,
-                _ => PaperStatus::Uploaded,
-            };
+            let status = PaperStatus::from_str(&status_str)?;
             out.push(PaperSummary {
                 id,
                 filename: row.get(1),
@@ -135,33 +151,35 @@ impl PaperRepository for SqliteStore {
         Ok(out)
     }
 
-    async fn update_status(&self, id: Uuid, status: PaperStatus) -> anyhow::Result<()> {
-        let status_str = format!("{:?}", status).to_lowercase();
-        let completed_at = if matches!(status, PaperStatus::Completed) {
-            Some(chrono::Utc::now().to_rfc3339())
-        } else {
-            None
-        };
-        sqlx::query("UPDATE papers SET status = ?1, completed_at = COALESCE(?2, completed_at) WHERE id = ?3")
-            .bind(&status_str)
-            .bind(&completed_at)
-            .bind(id.to_string())
-            .execute(&self.pool)
-            .await?;
-        Ok(())
-    }
-
-    async fn mark_interrupted_processing_as_failed(&self) -> anyhow::Result<u64> {
-        let result = sqlx::query(
-            "UPDATE papers
-             SET status = 'failed'
+    async fn list_interrupted_processing_papers(&self) -> anyhow::Result<Vec<Paper>> {
+        let rows = sqlx::query(
+            "SELECT id, filename, title, authors, full_text, status, created_at, completed_at
+             FROM papers
              WHERE status = 'processing'
                AND id NOT IN (SELECT paper_id FROM interpretations)",
         )
-        .execute(&self.pool)
+        .fetch_all(&self.pool)
         .await?;
 
-        Ok(result.rows_affected())
+        let mut out = Vec::new();
+        for row in rows {
+            let id_str: String = row.get(0);
+            let authors_json: String = row.get(3);
+            let authors: Vec<String> = serde_json::from_str(&authors_json).unwrap_or_default();
+            let status_str: String = row.get(5);
+            out.push(Paper::rehydrate(
+                Uuid::parse_str(&id_str)?,
+                row.get(1),
+                row.get(2),
+                authors,
+                row.get(4),
+                PaperStatus::from_str(&status_str)?,
+                row.get(6),
+                row.get(7),
+            ));
+        }
+
+        Ok(out)
     }
 
     async fn save_interpretation(&self, interp: &Interpretation) -> anyhow::Result<()> {
@@ -203,6 +221,73 @@ impl PaperRepository for SqliteStore {
     }
 }
 
+#[async_trait]
+impl ConceptExpansionCache for SqliteStore {
+    async fn get_concept_expansion(
+        &self,
+        paper_id: Uuid,
+        concept_id: &str,
+        max_age_days: i64,
+    ) -> anyhow::Result<Option<ConceptExpansion>> {
+        let row = sqlx::query(
+            "SELECT expansion_json
+             FROM concept_expansions
+             WHERE paper_id = ?1
+               AND concept_id = ?2
+               AND updated_at >= datetime('now', ?3)",
+        )
+        .bind(paper_id.to_string())
+        .bind(concept_id)
+        .bind(format!("-{max_age_days} days"))
+        .fetch_optional(&self.pool)
+        .await?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        let json: String = row.get(0);
+        let expansion = serde_json::from_str(&json).map_err(|e| AppError::Internal(e.into()))?;
+        Ok(Some(expansion))
+    }
+
+    async fn save_concept_expansion(
+        &self,
+        paper_id: Uuid,
+        concept_id: &str,
+        expansion: &ConceptExpansion,
+    ) -> anyhow::Result<()> {
+        let json = serde_json::to_string(expansion)?;
+
+        sqlx::query(
+            "INSERT INTO concept_expansions (paper_id, concept_id, expansion_json)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(paper_id, concept_id) DO UPDATE SET
+                expansion_json = excluded.expansion_json,
+                updated_at = datetime('now')",
+        )
+        .bind(paper_id.to_string())
+        .bind(concept_id)
+        .bind(&json)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    async fn delete_expired_concept_expansions(&self, max_age_days: i64) -> anyhow::Result<u64> {
+        let result = sqlx::query(
+            "DELETE FROM concept_expansions
+             WHERE updated_at < datetime('now', ?1)",
+        )
+        .bind(format!("-{max_age_days} days"))
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected())
+    }
+}
+
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS papers (
     id           TEXT PRIMARY KEY,
@@ -224,5 +309,16 @@ CREATE TABLE IF NOT EXISTS interpretations (
     created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS concept_expansions (
+    paper_id       TEXT NOT NULL REFERENCES papers(id),
+    concept_id     TEXT NOT NULL,
+    expansion_json TEXT NOT NULL,
+    created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at     TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (paper_id, concept_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_papers_created ON papers(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_concept_expansions_updated
+    ON concept_expansions(updated_at);
 "#;

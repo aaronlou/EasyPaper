@@ -3,13 +3,15 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
+use crate::application::ports::{
+    ExtractedPaperText, SharedConceptExpansionCache, SharedPdfExtractor,
+};
 use crate::domain::paper::{Paper, PaperStatus, PaperSummary};
 use crate::domain::repositories::SharedPaperRepository;
 use crate::domain::research::SharedResearchSource;
 use crate::error::{AppError, AppResult};
 use crate::llm::{Interpreter, LlmClient};
 use crate::models::api::ProgressInfo;
-use crate::pdf::ExtractResult;
 
 /// 论文学习工作流应用服务。
 ///
@@ -18,6 +20,10 @@ use crate::pdf::ExtractResult;
 #[derive(Clone)]
 pub struct PaperWorkflow {
     pub(super) papers: SharedPaperRepository,
+    pub(super) pdfs: SharedPdfExtractor,
+    pub(super) concept_expansions: SharedConceptExpansionCache,
+    pub(super) concept_prewarm_limit: usize,
+    pub(super) concept_cache_ttl_days: i64,
     pub(super) llm: LlmClient,
     pub(super) interpreter: Interpreter,
     pub(super) research: SharedResearchSource,
@@ -27,6 +33,10 @@ pub struct PaperWorkflow {
 impl PaperWorkflow {
     pub fn new(
         papers: SharedPaperRepository,
+        pdfs: SharedPdfExtractor,
+        concept_expansions: SharedConceptExpansionCache,
+        concept_prewarm_limit: usize,
+        concept_cache_ttl_days: i64,
         llm: LlmClient,
         interpreter: Interpreter,
         research: SharedResearchSource,
@@ -34,6 +44,10 @@ impl PaperWorkflow {
     ) -> Self {
         Self {
             papers,
+            pdfs,
+            concept_expansions,
+            concept_prewarm_limit,
+            concept_cache_ttl_days,
             llm,
             interpreter,
             research,
@@ -46,11 +60,32 @@ impl PaperWorkflow {
     }
 
     pub async fn recover_interrupted_work(&self) -> AppResult<()> {
-        let affected = self
-            .papers
-            .mark_interrupted_processing_as_failed()
+        let expired = self
+            .concept_expansions
+            .delete_expired_concept_expansions(self.concept_cache_ttl_days)
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
+
+        if expired > 0 {
+            tracing::info!(expired, "已清理过期概念深潜缓存");
+        }
+
+        let interrupted = self
+            .papers
+            .list_interrupted_processing_papers()
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        let affected = interrupted.len();
+        for mut paper in interrupted {
+            paper
+                .fail()
+                .map_err(|e| AppError::Internal(anyhow::anyhow!(e)))?;
+            self.papers
+                .save_paper(&paper)
+                .await
+                .map_err(|e| AppError::Database(e.to_string()))?;
+        }
 
         if affected > 0 {
             tracing::warn!(
@@ -65,20 +100,14 @@ impl PaperWorkflow {
     pub async fn register_extracted_paper(
         &self,
         filename: String,
-        extracted: ExtractResult,
+        extracted: ExtractedPaperText,
     ) -> AppResult<PaperSummary> {
-        let now = chrono::Utc::now().to_rfc3339();
-        let paper = Paper {
-            id: Uuid::new_v4(),
+        let mut paper = Paper::new_uploaded(
             filename,
-            title: extracted.title,
-            authors: extracted.authors,
-            char_count: extracted.full_text.chars().count(),
-            full_text: extracted.full_text,
-            status: PaperStatus::Uploaded,
-            created_at: now,
-            completed_at: None,
-        };
+            extracted.title,
+            extracted.authors,
+            extracted.full_text,
+        );
 
         self.papers
             .insert_paper(&paper)
@@ -86,11 +115,11 @@ impl PaperWorkflow {
             .map_err(|e| AppError::Database(e.to_string()))?;
 
         self.update_progress(
-            paper.id,
+            paper.id(),
             ProgressInfo::new(
                 "uploaded",
                 "文本已提取",
-                &format!("已提取 {} 字符，准备开始 AI 解读", paper.char_count),
+                &format!("已提取 {} 字符，准备开始 AI 解读", paper.char_count()),
                 10,
             ),
         )
@@ -103,7 +132,7 @@ impl PaperWorkflow {
                 "LLM 未配置，跳过解读。论文已保存，可在配置 OPENAI_API_KEY 后手动触发。"
             );
             self.update_progress(
-                paper.id,
+                paper.id(),
                 ProgressInfo::new(
                     "failed",
                     "LLM 未配置",
@@ -112,9 +141,37 @@ impl PaperWorkflow {
                 ),
             )
             .await;
+
+            paper
+                .fail()
+                .map_err(|e| AppError::Internal(anyhow::anyhow!(e)))?;
+            self.papers
+                .save_paper(&paper)
+                .await
+                .map_err(|e| AppError::Database(e.to_string()))?;
         }
 
-        Ok(paper.into())
+        Ok(PaperSummary::from(&paper))
+    }
+
+    pub async fn upload_paper(
+        &self,
+        filename: String,
+        pdf_bytes: Vec<u8>,
+    ) -> AppResult<PaperSummary> {
+        let extracted = self.pdfs.extract(&pdf_bytes).await.map_err(|e| {
+            tracing::warn!(filename = %filename, "PDF 提取失败: {e}");
+            e
+        })?;
+
+        tracing::info!(
+            filename = %filename,
+            title = %extracted.title,
+            char_count = extracted.full_text.chars().count(),
+            "PDF 文本提取完成"
+        );
+
+        self.register_extracted_paper(filename, extracted).await
     }
 
     pub async fn list_papers(&self) -> AppResult<Vec<PaperSummary>> {
@@ -135,7 +192,7 @@ impl PaperWorkflow {
             .map_err(|e| AppError::Database(e.to_string()))?
             .ok_or_else(|| AppError::NotFound(format!("论文 {id} 不存在")))?;
 
-        let interpretation = if matches!(paper.status, PaperStatus::Completed) {
+        let interpretation = if paper.is_completed() {
             self.papers
                 .get_interpretation(id)
                 .await
@@ -148,7 +205,7 @@ impl PaperWorkflow {
     }
 
     pub async fn retry_interpretation(&self, id: Uuid) -> AppResult<PaperSummary> {
-        let paper = self
+        let mut paper = self
             .papers
             .get_paper(id)
             .await
@@ -159,8 +216,12 @@ impl PaperWorkflow {
             return Err(AppError::LlmNotConfigured);
         }
 
+        paper
+            .queue_for_retry()
+            .map_err(|e| AppError::BadRequest(e.to_string()))?;
+
         self.papers
-            .update_status(id, PaperStatus::Uploaded)
+            .save_paper(&paper)
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
 
@@ -174,17 +235,9 @@ impl PaperWorkflow {
             ),
         )
         .await;
-        self.spawn_interpretation(Paper {
-            status: PaperStatus::Uploaded,
-            completed_at: None,
-            ..paper.clone()
-        });
+        self.spawn_interpretation(paper.clone());
 
-        Ok(PaperSummary::from(Paper {
-            status: PaperStatus::Uploaded,
-            completed_at: None,
-            ..paper
-        }))
+        Ok(PaperSummary::from(&paper))
     }
 
     pub async fn update_progress(&self, paper_id: Uuid, info: ProgressInfo) {
@@ -204,7 +257,7 @@ impl PaperWorkflow {
             _ => return None,
         };
 
-        Some(match paper.status {
+        Some(match paper.status() {
             PaperStatus::Uploaded => ProgressInfo::new(
                 "uploaded",
                 "等待解读",
@@ -234,12 +287,13 @@ impl PaperWorkflow {
 
     fn spawn_interpretation(&self, paper: Paper) {
         let store = self.papers.clone();
+        let workflow = self.clone();
         let interpreter = self.interpreter.clone();
         let progress = self.progress.clone();
         let reader_progress_store = self.progress.clone();
-        let paper_id = paper.id;
-        let title = paper.title.clone();
-        let text = paper.full_text.clone();
+        let paper_id = paper.id();
+        let title = paper.title().to_string();
+        let text = paper.full_text().to_string();
 
         let update = move |info: ProgressInfo| {
             let progress = progress.clone();
@@ -250,7 +304,13 @@ impl PaperWorkflow {
         };
 
         tokio::spawn(async move {
-            if let Err(e) = store.update_status(paper_id, PaperStatus::Processing).await {
+            let mut paper = paper;
+            if let Err(e) = paper.start_processing() {
+                tracing::error!(paper_id = %paper_id, "论文状态迁移失败: {e}");
+                return;
+            }
+
+            if let Err(e) = store.save_paper(&paper).await {
                 tracing::error!(paper_id = %paper_id, "更新状态失败: {e}");
                 return;
             }
@@ -305,7 +365,11 @@ impl PaperWorkflow {
 
                     if let Err(e) = store.save_interpretation(&interp).await {
                         tracing::error!(paper_id = %paper_id, "保存解读失败: {e}");
-                        let _ = store.update_status(paper_id, PaperStatus::Failed).await;
+                        if let Err(err) = paper.fail() {
+                            tracing::error!(paper_id = %paper_id, "论文状态迁移失败: {err}");
+                        } else {
+                            let _ = store.save_paper(&paper).await;
+                        }
                         update(ProgressInfo::new(
                             "failed",
                             "保存失败",
@@ -324,7 +388,9 @@ impl PaperWorkflow {
                     ))
                     .await;
 
-                    if let Err(e) = store.update_status(paper_id, PaperStatus::Completed).await {
+                    if let Err(e) = paper.complete() {
+                        tracing::error!(paper_id = %paper_id, "论文状态迁移失败: {e}");
+                    } else if let Err(e) = store.save_paper(&paper).await {
                         tracing::error!(paper_id = %paper_id, "更新状态失败: {e}");
                     }
 
@@ -337,10 +403,16 @@ impl PaperWorkflow {
                     .await;
 
                     tracing::info!(paper_id = %paper_id, "解读完成 ✓");
+
+                    workflow.spawn_concept_prewarm(paper_id);
                 }
                 Err(e) => {
                     tracing::error!(paper_id = %paper_id, "解读失败: {e}");
-                    let _ = store.update_status(paper_id, PaperStatus::Failed).await;
+                    if let Err(err) = paper.fail() {
+                        tracing::error!(paper_id = %paper_id, "论文状态迁移失败: {err}");
+                    } else {
+                        let _ = store.save_paper(&paper).await;
+                    }
                     update(ProgressInfo::new(
                         "failed",
                         "解读失败",

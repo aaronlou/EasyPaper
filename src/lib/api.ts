@@ -10,6 +10,7 @@ import type {
 } from "@/types";
 
 const BASE = "/api";
+const conceptExpansionCache = new Map<string, Promise<ConceptExpansion>>();
 
 async function request<T>(url: string, opts?: RequestInit): Promise<T> {
   const res = await fetch(BASE + url, {
@@ -67,7 +68,20 @@ export async function expandConcept(
   paperId: string,
   conceptId: string,
 ): Promise<ConceptExpansion> {
-  return request(`/papers/${paperId}/concepts/${conceptId}/expand`, {
-    method: "POST",
+  const cacheKey = `${paperId}:${conceptId}`;
+  const cached = conceptExpansionCache.get(cacheKey);
+  if (cached) return cached;
+
+  const pending = request<ConceptExpansion>(
+    `/papers/${paperId}/concepts/${conceptId}/expand`,
+    {
+      method: "POST",
+    },
+  ).catch((error) => {
+    conceptExpansionCache.delete(cacheKey);
+    throw error;
   });
+
+  conceptExpansionCache.set(cacheKey, pending);
+  return pending;
 }

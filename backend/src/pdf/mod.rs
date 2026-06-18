@@ -1,3 +1,3 @@
 pub mod extract;
 
-pub use extract::{ExtractResult, extract_text};
+pub use extract::{PdfExtractAdapter, extract_text};

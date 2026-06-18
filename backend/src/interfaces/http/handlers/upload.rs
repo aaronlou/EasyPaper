@@ -8,7 +8,7 @@ use crate::interfaces::http::AppState;
 use crate::models::api::UploadResponse;
 
 /// 最大 PDF 大小：50 MB
-const MAX_PDF_SIZE: usize = 50 * 1024 * 1024;
+pub const MAX_PDF_SIZE: usize = 50 * 1024 * 1024;
 
 /// POST /api/papers  —— 接收 PDF 上传
 ///
@@ -51,22 +51,7 @@ pub async fn upload_paper(
 
     tracing::info!(filename = %filename, size = pdf_bytes.len(), "收到 PDF 上传");
 
-    let extracted = crate::pdf::extract_text(&pdf_bytes).map_err(|e| {
-        tracing::warn!(filename = %filename, "PDF 提取失败: {e}");
-        e
-    })?;
-
-    tracing::info!(
-        filename = %filename,
-        title = %extracted.title,
-        char_count = extracted.full_text.chars().count(),
-        "PDF 文本提取完成"
-    );
-
-    let paper = state
-        .workflow
-        .register_extracted_paper(filename, extracted)
-        .await?;
+    let paper = state.workflow.upload_paper(filename, pdf_bytes).await?;
 
     Ok(Json(UploadResponse { paper }))
 }

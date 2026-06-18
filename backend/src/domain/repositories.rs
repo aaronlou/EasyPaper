@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use crate::domain::interpretation::Interpretation;
-use crate::domain::paper::{Paper, PaperStatus, PaperSummary};
+use crate::domain::paper::{Paper, PaperSummary};
 
 /// 论文聚合仓储端口。
 ///
@@ -10,10 +10,10 @@ use crate::domain::paper::{Paper, PaperStatus, PaperSummary};
 #[async_trait]
 pub trait PaperRepository: Send + Sync + 'static {
     async fn insert_paper(&self, paper: &Paper) -> anyhow::Result<()>;
+    async fn save_paper(&self, paper: &Paper) -> anyhow::Result<()>;
     async fn get_paper(&self, id: uuid::Uuid) -> anyhow::Result<Option<Paper>>;
     async fn list_papers(&self) -> anyhow::Result<Vec<PaperSummary>>;
-    async fn update_status(&self, id: uuid::Uuid, status: PaperStatus) -> anyhow::Result<()>;
-    async fn mark_interrupted_processing_as_failed(&self) -> anyhow::Result<u64>;
+    async fn list_interrupted_processing_papers(&self) -> anyhow::Result<Vec<Paper>>;
     async fn save_interpretation(&self, interp: &Interpretation) -> anyhow::Result<()>;
     async fn get_interpretation(
         &self,
