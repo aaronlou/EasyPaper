@@ -179,6 +179,7 @@ export interface ProgressInfo {
     | "uploaded"
     | "interpreting"
     | "reading"
+    | "synthesizing"
     | "parsing"
     | "saving"
     | "completed"

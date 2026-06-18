@@ -13,7 +13,7 @@ interface Props {
 const STEPS = [
   { phase: "uploaded", label: "文本提取", desc: "从 PDF 提取标题、作者与正文" },
   { phase: "reading", label: "并行阅读", desc: "多个 reader agent 分片理解论文" },
-  { phase: "reading", label: "多 Agent 汇总", desc: "合并概念、证据与机制笔记" },
+  { phase: "synthesizing", label: "协同审稿", desc: "方法、证据、教学 agent 交叉校验" },
   { phase: "parsing", label: "结构化解析", desc: "组装图示、表格与自测题" },
   { phase: "saving", label: "页面准备", desc: "写入数据库并渲染阅读器" },
 ];
@@ -127,7 +127,9 @@ export default function ProcessingView({ paperId, onDone, onBack, onOpenReader }
         return 0;
       case "interpreting":
       case "reading":
-        return (progress?.percent ?? 35) < 60 ? 1 : 2;
+        return 1;
+      case "synthesizing":
+        return 2;
       case "parsing":
         return 3;
       case "saving":
@@ -146,7 +148,7 @@ export default function ProcessingView({ paperId, onDone, onBack, onOpenReader }
   }, [phase, progress?.message, elapsed]);
 
   const helperMessage = useMemo(() => {
-    if (phase !== "interpreting" && phase !== "reading") return "";
+    if (phase !== "interpreting" && phase !== "reading" && phase !== "synthesizing") return "";
     const idx = Math.floor(elapsed / 7) % SUPPORTING_MESSAGES.length;
     return SUPPORTING_MESSAGES[idx];
   }, [phase, elapsed]);
@@ -163,17 +165,17 @@ export default function ProcessingView({ paperId, onDone, onBack, onOpenReader }
       {
         label: "Reader Agents",
         detail: "分片阅读、提取概念与证据",
-        status: makeStatus(20, 72),
+        status: makeStatus(20, 66),
       },
       {
-        label: "Structure Agent",
-        detail: "整理问题、机制、取舍链路",
-        status: makeStatus(45, 82),
+        label: "Review Agents",
+        detail: "审计方法、证据、边界条件",
+        status: makeStatus(66, 82),
       },
       {
-        label: "Teaching Agent",
-        detail: "生成费曼式图示、表格与自测",
-        status: makeStatus(55, 90),
+        label: "Reducer",
+        detail: "组装深度解读、图示与自测",
+        status: makeStatus(80, 94),
       },
     ];
   }, [phase, progress?.percent]);

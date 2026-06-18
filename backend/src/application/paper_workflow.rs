@@ -273,39 +273,33 @@ impl PaperWorkflow {
             ))
             .await;
 
-            let progress_for_readers = reader_progress_store.clone();
-            let reader_progress = move |done: usize, total: usize, label: String| {
-                let progress = progress_for_readers.clone();
+            let progress_for_agents = reader_progress_store.clone();
+            let agent_progress = move |event: crate::llm::interpreter::AgentProgressEvent| {
+                let progress = progress_for_agents.clone();
                 async move {
-                    let percent = 35
-                        + ((done as f32 / total.max(1) as f32) * 35.0)
-                            .round()
-                            .clamp(0.0, 35.0) as u8;
                     let mut map = progress.write().await;
                     map.insert(
                         paper_id,
                         ProgressInfo::new(
-                            "reading",
-                            "并行阅读中",
-                            &format!(
-                                "已完成 {done}/{total} 个 reader agent：{label}。正在继续合并其余片段的理解。"
-                            ),
-                            percent,
+                            &event.phase,
+                            &event.stage,
+                            &event.message,
+                            event.percent,
                         ),
                     );
                 }
             };
 
             match interpreter
-                .interpret_with_progress(paper_id, &title, &text, reader_progress)
+                .interpret_with_progress(paper_id, &title, &text, agent_progress)
                 .await
             {
                 Ok(interp) => {
                     update(ProgressInfo::new(
                         "parsing",
-                        "多 Agent 汇总",
-                        "reader agents 已返回，正在用稳定 reducer 组装概念、图示、表格与自测题。",
-                        80,
+                        "结构化解析",
+                        "多 agent artifacts 已返回，正在用稳定 reducer 组装深度解读、图示、表格与自测题。",
+                        84,
                     ))
                     .await;
 
