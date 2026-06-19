@@ -4,6 +4,7 @@ use crate::application::paper_workflow::PaperWorkflow;
 use crate::domain::interpretation::Block;
 use crate::domain::research::WebSearchResult;
 use crate::error::{AppError, AppResult};
+use crate::llm::LlmRole;
 use crate::models::api::{ConceptExpansion, ReferenceLink, ResearchStep};
 use crate::prompt;
 
@@ -18,9 +19,16 @@ impl PaperWorkflow {
         paper_id: Uuid,
         concept_id: String,
     ) -> AppResult<ConceptExpansion> {
+        self.entitlements
+            .record_workflow_start(self.ai_billing_mode, "concept_expand");
         if let Some(cached) = self
             .concept_expansions
-            .get_concept_expansion(paper_id, &concept_id, self.concept_cache_ttl_days)
+            .get_concept_expansion(
+                paper_id,
+                &concept_id,
+                &self.llm.cache_namespace(),
+                self.concept_cache_ttl_days,
+            )
             .await
             .map_err(|e| AppError::Database(e.to_string()))?
         {
@@ -95,7 +103,7 @@ impl PaperWorkflow {
         );
         let value = self
             .llm
-            .call_json(prompt::SYSTEM_EXPAND_CONCEPT, &user_msg)
+            .call_json_with_role(LlmRole::Concept, prompt::SYSTEM_EXPAND_CONCEPT, &user_msg)
             .await
             .map_err(|e| AppError::LlmCall(format!("概念深潜失败: {e}")))?;
 
@@ -111,7 +119,12 @@ impl PaperWorkflow {
         );
 
         self.concept_expansions
-            .save_concept_expansion(paper_id, &concept_id, &expansion)
+            .save_concept_expansion(
+                paper_id,
+                &concept_id,
+                &self.llm.cache_namespace(),
+                &expansion,
+            )
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
 
@@ -125,6 +138,16 @@ impl PaperWorkflow {
 
         let workflow = self.clone();
         tokio::spawn(async move {
+            let Ok(_permit) = workflow
+                .concept_prewarm_permits
+                .clone()
+                .acquire_owned()
+                .await
+            else {
+                tracing::warn!(paper_id = %paper_id, "概念预热限流器已关闭");
+                return;
+            };
+
             let interpretation = match workflow.papers.get_interpretation(paper_id).await {
                 Ok(Some(interpretation)) => interpretation,
                 Ok(None) => return,

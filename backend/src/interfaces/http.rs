@@ -1,9 +1,14 @@
 use axum::{
     Router,
     extract::DefaultBodyLimit,
+    http::{HeaderValue, Method},
     routing::{get, post},
 };
-use tower_http::{cors::CorsLayer, services::ServeDir, trace::TraceLayer};
+use tower_http::{
+    cors::{AllowOrigin, CorsLayer},
+    services::ServeDir,
+    trace::TraceLayer,
+};
 use uuid::Uuid;
 
 use crate::application::paper_workflow::PaperWorkflow;
@@ -36,7 +41,29 @@ pub fn router(config: &Config, state: AppState) -> Router {
         .nest("/api", api_router(state))
         .fallback_service(ServeDir::new(&config.static_dir))
         .layer(TraceLayer::new_for_http())
-        .layer(CorsLayer::permissive())
+        .layer(cors_layer(config))
+}
+
+fn cors_layer(config: &Config) -> CorsLayer {
+    if config.cors_origins.is_empty() {
+        return CorsLayer::permissive();
+    }
+
+    let origins = config
+        .cors_origins
+        .iter()
+        .filter_map(|origin| match HeaderValue::from_str(origin) {
+            Ok(value) => Some(value),
+            Err(err) => {
+                tracing::warn!(origin = %origin, "忽略无效 CORS origin: {err}");
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+
+    CorsLayer::new()
+        .allow_origin(AllowOrigin::list(origins))
+        .allow_methods([Method::GET, Method::POST])
 }
 
 fn api_router(state: AppState) -> Router {
@@ -52,6 +79,10 @@ fn api_router(state: AppState) -> Router {
         .route(
             "/papers/{id}/progress",
             get(handlers::progress::get_progress),
+        )
+        .route(
+            "/papers/{id}/study-pack",
+            post(handlers::study_pack::get_or_generate_study_pack),
         )
         .route(
             "/papers/{id}/concepts/{concept_id}/expand",

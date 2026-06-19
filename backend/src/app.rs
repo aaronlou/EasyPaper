@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use tokio::sync::RwLock;
 
-use crate::application::paper_workflow::PaperWorkflow;
+use crate::application::paper_workflow::{PaperWorkflow, PaperWorkflowDeps};
 use crate::application::ports::{SharedConceptExpansionCache, SharedPdfExtractor};
 use crate::config::Config;
 use crate::domain::repositories::SharedPaperRepository;
@@ -22,28 +22,25 @@ pub async fn build(config: Config) -> anyhow::Result<axum::Router> {
     let concept_expansions: SharedConceptExpansionCache = store.clone();
 
     // 初始化 LLM
-    let llm = LlmClient::new(
-        config.openai_api_key.clone(),
-        config.openai_base_url.clone(),
-        config.openai_model.clone(),
-    );
+    let llm = LlmClient::from_profile(config.llm_profile.clone());
     let interpreter = Interpreter::new(llm.clone());
     let research: SharedResearchSource =
         Arc::new(WebSearchClient::new(WebSearchConfig::from(&config)));
     let pdfs: SharedPdfExtractor = Arc::new(PdfExtractAdapter);
 
     let progress = Arc::new(RwLock::new(std::collections::HashMap::new()));
-    let workflow = PaperWorkflow::new(
-        papers.clone(),
-        pdfs.clone(),
-        concept_expansions.clone(),
-        config.concept_prewarm_limit,
-        config.concept_cache_ttl_days,
-        llm.clone(),
-        interpreter.clone(),
-        research.clone(),
-        progress.clone(),
-    );
+    let workflow = PaperWorkflow::new(PaperWorkflowDeps {
+        papers: papers.clone(),
+        pdfs: pdfs.clone(),
+        concept_expansions: concept_expansions.clone(),
+        concept_prewarm_limit: config.concept_prewarm_limit,
+        concept_cache_ttl_days: config.concept_cache_ttl_days,
+        concept_prewarm_concurrency: config.concept_prewarm_concurrency,
+        llm: llm.clone(),
+        interpreter: interpreter.clone(),
+        research: research.clone(),
+        progress: progress.clone(),
+    });
     workflow.recover_interrupted_work().await?;
 
     let state = AppState { workflow };

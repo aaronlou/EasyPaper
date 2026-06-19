@@ -5,7 +5,7 @@ use axum::{
 
 use crate::error::{AppError, AppResult};
 use crate::interfaces::http::AppState;
-use crate::models::api::UploadResponse;
+use crate::models::api::{ClientLlmProfile, UploadResponse};
 
 /// 最大 PDF 大小：50 MB
 pub const MAX_PDF_SIZE: usize = 50 * 1024 * 1024;
@@ -19,6 +19,7 @@ pub async fn upload_paper(
 ) -> AppResult<Json<UploadResponse>> {
     let mut filename = None;
     let mut pdf_bytes: Option<Vec<u8>> = None;
+    let mut llm_profile: Option<ClientLlmProfile> = None;
 
     while let Some(field) = multipart
         .next_field()
@@ -28,21 +29,37 @@ pub async fn upload_paper(
         let name = field.name().unwrap_or("").to_string();
         let file_name = field.file_name().map(|s| s.to_string());
 
-        if name == "file" {
-            let fname = file_name.unwrap_or_else(|| "paper.pdf".to_string());
-            let data = field
-                .bytes()
-                .await
-                .map_err(|e| AppError::BadRequest(format!("读取文件失败: {e}")))?;
+        match name.as_str() {
+            "file" => {
+                let fname = file_name.unwrap_or_else(|| "paper.pdf".to_string());
+                let data = field
+                    .bytes()
+                    .await
+                    .map_err(|e| AppError::BadRequest(format!("读取文件失败: {e}")))?;
 
-            if data.len() > MAX_PDF_SIZE {
-                return Err(AppError::PayloadTooLarge {
-                    limit: MAX_PDF_SIZE,
-                });
+                if data.len() > MAX_PDF_SIZE {
+                    return Err(AppError::PayloadTooLarge {
+                        limit: MAX_PDF_SIZE,
+                    });
+                }
+
+                filename = Some(fname);
+                pdf_bytes = Some(data.to_vec());
             }
-
-            filename = Some(fname);
-            pdf_bytes = Some(data.to_vec());
+            "llm_profile" => {
+                let data = field
+                    .text()
+                    .await
+                    .map_err(|e| AppError::BadRequest(format!("读取 LLM 配置失败: {e}")))?;
+                if !data.trim().is_empty() {
+                    llm_profile = Some(
+                        serde_json::from_str::<ClientLlmProfile>(&data).map_err(|e| {
+                            AppError::BadRequest(format!("LLM 配置 JSON 无效: {e}"))
+                        })?,
+                    );
+                }
+            }
+            _ => {}
         }
     }
 
@@ -51,7 +68,10 @@ pub async fn upload_paper(
 
     tracing::info!(filename = %filename, size = pdf_bytes.len(), "收到 PDF 上传");
 
-    let paper = state.workflow.upload_paper(filename, pdf_bytes).await?;
+    let paper = state
+        .workflow
+        .upload_paper(filename, pdf_bytes, llm_profile)
+        .await?;
 
     Ok(Json(UploadResponse { paper }))
 }

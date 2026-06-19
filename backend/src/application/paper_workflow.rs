@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, Semaphore};
 use uuid::Uuid;
 
+use crate::application::entitlements::{AiBillingMode, AiEntitlements};
 use crate::application::ports::{
     ExtractedPaperText, SharedConceptExpansionCache, SharedPdfExtractor,
 };
@@ -11,7 +12,23 @@ use crate::domain::repositories::SharedPaperRepository;
 use crate::domain::research::SharedResearchSource;
 use crate::error::{AppError, AppResult};
 use crate::llm::{Interpreter, LlmClient};
-use crate::models::api::ProgressInfo;
+use crate::models::api::{ClientLlmProfile, ProgressInfo};
+
+pub type ProgressStore = Arc<RwLock<std::collections::HashMap<Uuid, ProgressInfo>>>;
+
+#[derive(Clone)]
+pub struct PaperWorkflowDeps {
+    pub papers: SharedPaperRepository,
+    pub pdfs: SharedPdfExtractor,
+    pub concept_expansions: SharedConceptExpansionCache,
+    pub concept_prewarm_limit: usize,
+    pub concept_cache_ttl_days: i64,
+    pub concept_prewarm_concurrency: usize,
+    pub llm: LlmClient,
+    pub interpreter: Interpreter,
+    pub research: SharedResearchSource,
+    pub progress: ProgressStore,
+}
 
 /// 论文学习工作流应用服务。
 ///
@@ -24,39 +41,54 @@ pub struct PaperWorkflow {
     pub(super) concept_expansions: SharedConceptExpansionCache,
     pub(super) concept_prewarm_limit: usize,
     pub(super) concept_cache_ttl_days: i64,
+    pub(super) concept_prewarm_permits: Arc<Semaphore>,
     pub(super) llm: LlmClient,
     pub(super) interpreter: Interpreter,
     pub(super) research: SharedResearchSource,
-    pub(super) progress: Arc<RwLock<std::collections::HashMap<Uuid, ProgressInfo>>>,
+    pub(super) progress: ProgressStore,
+    pub(super) entitlements: AiEntitlements,
+    pub(super) ai_billing_mode: AiBillingMode,
 }
 
 impl PaperWorkflow {
-    pub fn new(
-        papers: SharedPaperRepository,
-        pdfs: SharedPdfExtractor,
-        concept_expansions: SharedConceptExpansionCache,
-        concept_prewarm_limit: usize,
-        concept_cache_ttl_days: i64,
-        llm: LlmClient,
-        interpreter: Interpreter,
-        research: SharedResearchSource,
-        progress: Arc<RwLock<std::collections::HashMap<Uuid, ProgressInfo>>>,
-    ) -> Self {
+    pub fn new(deps: PaperWorkflowDeps) -> Self {
         Self {
-            papers,
-            pdfs,
-            concept_expansions,
-            concept_prewarm_limit,
-            concept_cache_ttl_days,
-            llm,
-            interpreter,
-            research,
-            progress,
+            papers: deps.papers,
+            pdfs: deps.pdfs,
+            concept_expansions: deps.concept_expansions,
+            concept_prewarm_limit: deps.concept_prewarm_limit,
+            concept_cache_ttl_days: deps.concept_cache_ttl_days,
+            concept_prewarm_permits: Arc::new(Semaphore::new(deps.concept_prewarm_concurrency)),
+            llm: deps.llm,
+            interpreter: deps.interpreter,
+            research: deps.research,
+            progress: deps.progress,
+            entitlements: AiEntitlements::new(),
+            ai_billing_mode: AiBillingMode::Managed,
         }
     }
 
     pub fn llm_is_configured(&self) -> bool {
         self.llm.is_configured()
+    }
+
+    pub fn configured_llm_providers(&self) -> Vec<&str> {
+        self.llm.configured_providers()
+    }
+
+    pub fn with_client_llm_profile(&self, profile: Option<ClientLlmProfile>) -> Self {
+        let ai_billing_mode = AiBillingMode::from_profile(profile.as_ref());
+        let Some(profile) = profile.and_then(ClientLlmProfile::into_profile_config) else {
+            let mut workflow = self.clone();
+            workflow.ai_billing_mode = ai_billing_mode;
+            return workflow;
+        };
+        let llm = LlmClient::from_profile(profile);
+        let mut workflow = self.clone();
+        workflow.interpreter = Interpreter::new(llm.clone());
+        workflow.llm = llm;
+        workflow.ai_billing_mode = ai_billing_mode;
+        workflow
     }
 
     pub async fn recover_interrupted_work(&self) -> AppResult<()> {
@@ -158,7 +190,12 @@ impl PaperWorkflow {
         &self,
         filename: String,
         pdf_bytes: Vec<u8>,
+        llm_profile: Option<ClientLlmProfile>,
     ) -> AppResult<PaperSummary> {
+        self.entitlements.record_workflow_start(
+            AiBillingMode::from_profile(llm_profile.as_ref()),
+            "paper_upload",
+        );
         let extracted = self.pdfs.extract(&pdf_bytes).await.map_err(|e| {
             tracing::warn!(filename = %filename, "PDF 提取失败: {e}");
             e
@@ -171,7 +208,9 @@ impl PaperWorkflow {
             "PDF 文本提取完成"
         );
 
-        self.register_extracted_paper(filename, extracted).await
+        self.with_client_llm_profile(llm_profile)
+            .register_extracted_paper(filename, extracted)
+            .await
     }
 
     pub async fn list_papers(&self) -> AppResult<Vec<PaperSummary>> {
@@ -204,7 +243,16 @@ impl PaperWorkflow {
         Ok((paper, interpretation))
     }
 
-    pub async fn retry_interpretation(&self, id: Uuid) -> AppResult<PaperSummary> {
+    pub async fn retry_interpretation(
+        &self,
+        id: Uuid,
+        llm_profile: Option<ClientLlmProfile>,
+    ) -> AppResult<PaperSummary> {
+        self.entitlements.record_workflow_start(
+            AiBillingMode::from_profile(llm_profile.as_ref()),
+            "paper_retry",
+        );
+        let workflow = self.with_client_llm_profile(llm_profile);
         let mut paper = self
             .papers
             .get_paper(id)
@@ -212,7 +260,7 @@ impl PaperWorkflow {
             .map_err(|e| AppError::Database(e.to_string()))?
             .ok_or_else(|| AppError::NotFound(format!("论文 {id} 不存在")))?;
 
-        if !self.llm.is_configured() {
+        if !workflow.llm.is_configured() {
             return Err(AppError::LlmNotConfigured);
         }
 
@@ -220,22 +268,24 @@ impl PaperWorkflow {
             .queue_for_retry()
             .map_err(|e| AppError::BadRequest(e.to_string()))?;
 
-        self.papers
+        workflow
+            .papers
             .save_paper(&paper)
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
 
-        self.update_progress(
-            id,
-            ProgressInfo::new(
-                "uploaded",
-                "重新排队",
-                "正在重新发起 AI 解读，这次会尝试自动修复模型返回的 JSON。",
-                10,
-            ),
-        )
-        .await;
-        self.spawn_interpretation(paper.clone());
+        workflow
+            .update_progress(
+                id,
+                ProgressInfo::new(
+                    "uploaded",
+                    "重新排队",
+                    "正在重新发起 AI 解读，这次会尝试自动修复模型返回的 JSON。",
+                    10,
+                ),
+            )
+            .await;
+        workflow.spawn_interpretation(paper.clone());
 
         Ok(PaperSummary::from(&paper))
     }

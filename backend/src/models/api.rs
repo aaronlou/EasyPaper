@@ -1,12 +1,150 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::domain::interpretation::Interpretation;
 use crate::domain::paper::PaperSummary;
+use crate::llm::{LlmProfileConfig, LlmProviderConfig, LlmRole};
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ClientAiMode {
+    Managed,
+    Byok,
+}
 
 /// POST /api/papers 上传成功后的响应
 #[derive(Debug, Serialize)]
 pub struct UploadResponse {
     pub paper: PaperSummary,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct LlmProfileRequest {
+    #[serde(default)]
+    pub llm_profile: Option<ClientLlmProfile>,
+}
+
+/// Optional per-request LLM profile supplied by the browser.
+///
+/// API keys are used for the current request/workflow only and are not persisted.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ClientLlmProfile {
+    #[serde(default = "default_client_ai_mode")]
+    pub mode: ClientAiMode,
+    #[serde(default)]
+    pub providers: Vec<ClientLlmProvider>,
+    #[serde(default)]
+    pub routes: ClientLlmRoutes,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ClientLlmProvider {
+    pub id: String,
+    pub base_url: String,
+    pub model: String,
+    #[serde(default)]
+    pub api_key: Option<String>,
+    #[serde(default = "default_temperature")]
+    pub temperature: f32,
+    #[serde(default)]
+    pub responses_api: bool,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ClientLlmRoutes {
+    #[serde(default)]
+    pub default: Vec<String>,
+    #[serde(default)]
+    pub reader: Vec<String>,
+    #[serde(default)]
+    pub specialist: Vec<String>,
+    #[serde(default)]
+    pub concept: Vec<String>,
+    #[serde(default)]
+    pub repair: Vec<String>,
+}
+
+impl ClientLlmProfile {
+    pub fn into_profile_config(self) -> Option<LlmProfileConfig> {
+        if self.mode == ClientAiMode::Managed {
+            return None;
+        }
+
+        let providers = self
+            .providers
+            .into_iter()
+            .filter(|provider| {
+                !provider.id.trim().is_empty()
+                    && !provider.base_url.trim().is_empty()
+                    && !provider.model.trim().is_empty()
+                    && provider
+                        .api_key
+                        .as_ref()
+                        .is_some_and(|key| !key.trim().is_empty())
+            })
+            .map(|provider| LlmProviderConfig {
+                id: provider.id.trim().to_string(),
+                api_key: provider.api_key.map(|key| key.trim().to_string()),
+                base_url: provider.base_url.trim().to_string(),
+                model: provider.model.trim().to_string(),
+                temperature: provider.temperature.clamp(0.0, 2.0),
+                prefer_responses_api: provider.responses_api,
+            })
+            .collect::<Vec<_>>();
+
+        if providers.is_empty() {
+            return None;
+        }
+
+        let provider_ids = providers
+            .iter()
+            .map(|provider| provider.id.clone())
+            .collect::<Vec<_>>();
+        let mut role_routes = HashMap::new();
+        role_routes.insert(
+            LlmRole::Default,
+            normalize_route(self.routes.default, &provider_ids),
+        );
+
+        for (role, route) in [
+            (LlmRole::Reader, self.routes.reader),
+            (LlmRole::Specialist, self.routes.specialist),
+            (LlmRole::Concept, self.routes.concept),
+            (LlmRole::Repair, self.routes.repair),
+        ] {
+            let route = normalize_route(route, &provider_ids);
+            if !route.is_empty() {
+                role_routes.insert(role, route);
+            }
+        }
+
+        Some(LlmProfileConfig {
+            providers,
+            role_routes,
+        })
+    }
+}
+
+fn normalize_route(route: Vec<String>, fallback: &[String]) -> Vec<String> {
+    let route = route
+        .into_iter()
+        .map(|item| item.trim().to_string())
+        .filter(|item| !item.is_empty())
+        .collect::<Vec<_>>();
+    if route.is_empty() {
+        fallback.to_vec()
+    } else {
+        route
+    }
+}
+
+fn default_temperature() -> f32 {
+    0.4
+}
+
+fn default_client_ai_mode() -> ClientAiMode {
+    ClientAiMode::Byok
 }
 
 /// GET /api/papers/:id 返回的完整论文 + 解读

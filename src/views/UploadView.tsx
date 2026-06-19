@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Upload, FileText, AlertCircle, CheckCircle2, Clock } from "lucide-react";
 import { usePaperStore } from "@/stores/usePaperStore";
 import { cn } from "@/lib/cn";
+import { hasUsableClientLlmProfile } from "@/lib/llmProfile";
 import type { PaperSummary } from "@/types";
 
 interface Props {
@@ -14,6 +15,7 @@ export default function UploadView({ onDone, onOpenPaper }: Props) {
     usePaperStore();
   const [error, setError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [hasClientLlm, setHasClientLlm] = useState(hasUsableClientLlmProfile());
   const inputRef = useRef<HTMLInputElement>(null);
 
   // 定时刷新论文列表（以获取 processing/completed 状态变更）
@@ -21,6 +23,17 @@ export default function UploadView({ onDone, onOpenPaper }: Props) {
     const timer = setInterval(loadPapers, 3000);
     return () => clearInterval(timer);
   }, [loadPapers]);
+
+  useEffect(() => {
+    const sync = () => setHasClientLlm(hasUsableClientLlmProfile());
+    window.addEventListener("storage", sync);
+    window.addEventListener("easypaper:llm-profile-changed", sync);
+    sync();
+    return () => {
+      window.removeEventListener("storage", sync);
+      window.removeEventListener("easypaper:llm-profile-changed", sync);
+    };
+  }, []);
 
   const handleFile = useCallback(
     async (file: File) => {
@@ -131,10 +144,10 @@ export default function UploadView({ onDone, onOpenPaper }: Props) {
         </div>
       )}
 
-      {!health?.llm_configured && (
+      {!health?.llm_configured && !hasClientLlm && (
         <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-700 flex items-center gap-2">
           <AlertCircle className="w-4 h-4" />
-          尚未配置 LLM（OPENAI_API_KEY），论文可以上传保存，但无法自动解读。
+          尚未配置 LLM。点击右上角设置按钮，可以填入你自己的模型 API Key。
         </div>
       )}
 

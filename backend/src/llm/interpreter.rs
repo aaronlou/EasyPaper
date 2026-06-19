@@ -9,7 +9,7 @@ use crate::domain::interpretation::{
     Block, ChartDataPoint, ComparisonRow, Concept, Interpretation, QuizOption, Stat,
 };
 use crate::error::{AppError, AppResult};
-use crate::llm::LlmClient;
+use crate::llm::{LlmClient, LlmRole};
 use crate::prompt;
 
 const SLICE_CHARS: usize = 6_500;
@@ -74,7 +74,7 @@ impl Interpreter {
                     &slice.text,
                 );
                 let value = llm
-                    .call_json(prompt::SYSTEM_ANALYZE_SLICE, &user_msg)
+                    .call_json_with_role(LlmRole::Reader, prompt::SYSTEM_ANALYZE_SLICE, &user_msg)
                     .await?;
                 let notes: SliceNotes = serde_json::from_value(value).map_err(|e| {
                     AppError::InvalidLlmOutput(format!(
@@ -189,7 +189,9 @@ impl Interpreter {
             specialists.spawn(async move {
                 let user_msg =
                     prompt::user_a2a_agent_task(&paper_title, agent.display_name(), &envelope);
-                let value = llm.call_json(agent.system_prompt(), &user_msg).await?;
+                let value = llm
+                    .call_json_with_role(LlmRole::Specialist, agent.system_prompt(), &user_msg)
+                    .await?;
                 Ok::<(SpecialistAgent, serde_json::Value), AppError>((agent, value))
             });
         }

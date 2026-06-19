@@ -7,7 +7,7 @@ use uuid::Uuid;
 use crate::domain::paper::PaperSummary;
 use crate::error::AppResult;
 use crate::interfaces::http::AppState;
-use crate::models::api::{PaperDetail, UploadResponse};
+use crate::models::api::{LlmProfileRequest, PaperDetail, UploadResponse};
 
 /// GET /api/papers  —— 列出所有已上传的论文
 pub async fn list_papers(State(state): State<AppState>) -> AppResult<Json<Vec<PaperSummary>>> {
@@ -32,7 +32,11 @@ pub async fn get_paper(
 pub async fn retry_interpretation(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
+    body: Option<Json<LlmProfileRequest>>,
 ) -> AppResult<Json<UploadResponse>> {
-    let paper = state.workflow.retry_interpretation(id).await?;
+    let paper = state
+        .workflow
+        .retry_interpretation(id, body.and_then(|Json(body)| body.llm_profile))
+        .await?;
     Ok(Json(UploadResponse { paper }))
 }

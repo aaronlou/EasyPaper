@@ -43,3 +43,4 @@ async-trait = "0.1"
 
 # PDF 解析（M1 暂用，后续可能换 lopdf）
 pdf-extract = "0.7"
+tempfile = "3"

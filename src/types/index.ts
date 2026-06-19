@@ -166,10 +166,36 @@ export interface HealthResponse {
   service: string;
   version: string;
   llm_configured: boolean;
+  llm_providers?: string[];
 }
 
 export interface UploadResponse {
   paper: PaperSummary;
+}
+
+// ── Client LLM Profile ─────────────
+
+export interface ClientLlmProvider {
+  id: string;
+  base_url: string;
+  model: string;
+  api_key?: string;
+  temperature: number;
+  responses_api?: boolean;
+}
+
+export interface ClientLlmRoutes {
+  default: string[];
+  reader: string[];
+  specialist: string[];
+  concept: string[];
+  repair: string[];
+}
+
+export interface ClientLlmProfile {
+  mode: "managed" | "byok";
+  providers: ClientLlmProvider[];
+  routes: ClientLlmRoutes;
 }
 
 // ── Progress ───────────────────────
@@ -265,6 +291,95 @@ export interface CheckQuestion {
 export interface CheckOption {
   text: string;
   correct: boolean;
+}
+
+// ── Study Pack / Research Map ──────
+
+export interface StudyPack {
+  paper_id: string;
+  inspiration: InsightItem[];
+  structure_logic: StructureMove[];
+  prerequisites: Prerequisite[];
+  research_directions: ResearchDirection[];
+  literature_review: LineageItem[];
+  lineage: ResearchLineage;
+  translation?: TranslationSummary | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface InsightItem {
+  title: string;
+  explanation: string;
+  how_to_apply: string;
+}
+
+export interface StructureMove {
+  step: string;
+  purpose: string;
+  why_it_works: string;
+  writing_takeaway: string;
+}
+
+export interface Prerequisite {
+  topic: string;
+  why_needed: string;
+  minimum_goal: string;
+  references: StudyReference[];
+}
+
+export interface ResearchDirection {
+  question: string;
+  motivation: string;
+  possible_method: string;
+  first_step: string;
+}
+
+export interface LineageItem {
+  stage: string;
+  idea: string;
+  representative_work: StudyReference[];
+}
+
+export interface ResearchLineage {
+  builds_on: StudyReference[];
+  follow_ups: StudyReference[];
+  search_queries: string[];
+}
+
+export interface StudyReference {
+  title: string;
+  authors: string[];
+  year?: string | null;
+  url?: string | null;
+  relevance: string;
+  source_type: string;
+}
+
+export interface TranslationSummary {
+  source_language: string;
+  target_language: string;
+  glossary?: TranslationGlossaryItem[];
+  sections: TranslatedSection[];
+}
+
+export interface TranslatedSection {
+  heading: string;
+  original_excerpt?: string;
+  translated_text: string;
+  expression_notes?: ExpressionNote[];
+}
+
+export interface TranslationGlossaryItem {
+  term: string;
+  translation: string;
+  note: string;
+}
+
+export interface ExpressionNote {
+  english: string;
+  chinese: string;
+  usage: string;
 }
 
 export interface ResearchStep {

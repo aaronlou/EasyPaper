@@ -1,46 +1,212 @@
-use serde::Deserialize;
 use serde_json::Value;
+use std::collections::hash_map::DefaultHasher;
+use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 
 use crate::error::{AppError, AppResult};
 
-/// OpenAI 兼容客户端（沿用 letters 的双协议设计）
+const DEFAULT_PROVIDER_ID: &str = "default";
+const DEFAULT_ROLE: &str = "default";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LlmRole {
+    Default,
+    Reader,
+    Specialist,
+    Concept,
+    Repair,
+    Study,
+    Literature,
+    Translation,
+}
+
+impl LlmRole {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Default => DEFAULT_ROLE,
+            Self::Reader => "reader",
+            Self::Specialist => "specialist",
+            Self::Concept => "concept",
+            Self::Repair => "repair",
+            Self::Study => "study",
+            Self::Literature => "literature",
+            Self::Translation => "translation",
+        }
+    }
+}
+
+impl std::fmt::Display for LlmRole {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for LlmRole {
+    type Err = anyhow::Error;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            DEFAULT_ROLE => Ok(Self::Default),
+            "reader" | "readers" => Ok(Self::Reader),
+            "specialist" | "specialists" => Ok(Self::Specialist),
+            "concept" | "concepts" | "expand" | "expansion" => Ok(Self::Concept),
+            "repair" | "json_repair" | "json-repair" => Ok(Self::Repair),
+            "study" | "study_pack" | "study-pack" => Ok(Self::Study),
+            "literature" | "literature_review" | "literature-review" => Ok(Self::Literature),
+            "translation" | "translate" => Ok(Self::Translation),
+            other => Err(anyhow::anyhow!("未知 LLM role: {other}")),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LlmProviderConfig {
+    pub id: String,
+    pub api_key: Option<String>,
+    pub base_url: String,
+    pub model: String,
+    pub temperature: f32,
+    pub prefer_responses_api: bool,
+}
+
+impl LlmProviderConfig {
+    pub fn default_compatible(api_key: Option<String>, base_url: String, model: String) -> Self {
+        let prefer_responses_api = base_url.contains("api.openai.com");
+        Self {
+            id: DEFAULT_PROVIDER_ID.to_string(),
+            api_key,
+            base_url,
+            model,
+            temperature: 0.4,
+            prefer_responses_api,
+        }
+    }
+
+    fn is_configured(&self) -> bool {
+        self.api_key.as_ref().is_some_and(|key| !key.is_empty())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LlmProfileConfig {
+    pub providers: Vec<LlmProviderConfig>,
+    pub role_routes: HashMap<LlmRole, Vec<String>>,
+}
+
+impl LlmProfileConfig {
+    pub fn single_provider(provider: LlmProviderConfig) -> Self {
+        let mut role_routes = HashMap::new();
+        role_routes.insert(LlmRole::Default, vec![provider.id.clone()]);
+        Self {
+            providers: vec![provider],
+            role_routes,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct LlmClient {
     http: reqwest::Client,
-    api_key: Option<String>,
-    base_url: String,
-    model: String,
+    providers: HashMap<String, LlmProviderConfig>,
+    role_routes: HashMap<LlmRole, Vec<String>>,
+    default_route: Vec<String>,
 }
 
 impl LlmClient {
     pub fn new(api_key: Option<String>, base_url: String, model: String) -> Self {
+        Self::from_profile(LlmProfileConfig::single_provider(
+            LlmProviderConfig::default_compatible(api_key, base_url, model),
+        ))
+    }
+
+    pub fn from_profile(profile: LlmProfileConfig) -> Self {
+        let providers = profile
+            .providers
+            .into_iter()
+            .map(|provider| (provider.id.clone(), provider))
+            .collect::<HashMap<_, _>>();
+        let default_route = profile
+            .role_routes
+            .get(&LlmRole::Default)
+            .cloned()
+            .unwrap_or_else(|| providers.keys().cloned().collect());
+
         Self {
             http: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(120))
                 .build()
                 .expect("failed to build reqwest client"),
-            api_key,
-            base_url,
-            model,
+            providers,
+            role_routes: profile.role_routes,
+            default_route,
         }
     }
 
     pub fn is_configured(&self) -> bool {
-        self.api_key.is_some()
+        self.providers
+            .values()
+            .any(LlmProviderConfig::is_configured)
     }
 
-    /// 是否走新版 Responses API（仅 OpenAI 官方）
-    fn uses_responses_api(&self) -> bool {
-        self.base_url.contains("api.openai.com")
+    pub fn configured_providers(&self) -> Vec<&str> {
+        let mut providers = self
+            .providers
+            .values()
+            .filter(|provider| provider.is_configured())
+            .map(|provider| provider.id.as_str())
+            .collect::<Vec<_>>();
+        providers.sort_unstable();
+        providers
+    }
+
+    pub fn cache_namespace(&self) -> String {
+        let mut hasher = DefaultHasher::new();
+        let mut providers = self
+            .providers
+            .values()
+            .map(|provider| {
+                (
+                    provider.id.as_str(),
+                    provider.base_url.as_str(),
+                    provider.model.as_str(),
+                    provider.temperature.to_bits(),
+                    provider.prefer_responses_api,
+                )
+            })
+            .collect::<Vec<_>>();
+        providers.sort_unstable_by(|a, b| a.0.cmp(b.0));
+        providers.hash(&mut hasher);
+        let mut routes = self
+            .role_routes
+            .iter()
+            .map(|(role, route)| (role.as_str(), route.as_slice()))
+            .collect::<Vec<_>>();
+        routes.sort_unstable_by(|a, b| a.0.cmp(b.0));
+        routes.hash(&mut hasher);
+        format!(
+            "concept-expansion-v4-teaching-flow-{:016x}",
+            hasher.finish()
+        )
     }
 
     /// 调用 LLM 并期望返回 JSON（解析成 serde_json::Value）
     pub async fn call_json(&self, system: &str, user: &str) -> AppResult<Value> {
-        let raw = self.call_text(system, user).await?;
+        self.call_json_with_role(LlmRole::Default, system, user)
+            .await
+    }
+
+    pub async fn call_json_with_role(
+        &self,
+        role: LlmRole,
+        system: &str,
+        user: &str,
+    ) -> AppResult<Value> {
+        let raw = self.call_text_with_role(role, system, user, true).await?;
         match parse_json_lenient(&raw) {
             Ok(value) => Ok(value),
             Err(first_error) => {
                 tracing::warn!(
+                    role = %role,
                     "LLM JSON 首次解析失败，尝试自动修复: {first_error}; excerpt={}",
                     error_excerpt(&raw, first_error.line(), first_error.column())
                 );
@@ -55,14 +221,70 @@ impl LlmClient {
         }
     }
 
-    /// 调用 LLM 返回纯文本
+    /// 调用 LLM 返回纯文本。
     pub async fn call_text(&self, system: &str, user: &str) -> AppResult<String> {
+        self.call_text_with_role(LlmRole::Default, system, user, false)
+            .await
+    }
+
+    pub async fn call_text_with_role(
+        &self,
+        role: LlmRole,
+        system: &str,
+        user: &str,
+        wants_json: bool,
+    ) -> AppResult<String> {
+        let mut errors = Vec::new();
+        for provider in self.providers_for_role(role) {
+            match self
+                .call_text_with_provider(provider, system, user, wants_json)
+                .await
+            {
+                Ok(content) => return Ok(content),
+                Err(err) => {
+                    tracing::warn!(
+                        role = %role,
+                        provider = %provider.id,
+                        "LLM provider 调用失败，尝试 fallback: {err}"
+                    );
+                    errors.push(format!("{}: {err}", provider.id));
+                }
+            }
+        }
+
+        if errors.is_empty() {
+            Err(AppError::LlmNotConfigured)
+        } else {
+            Err(AppError::LlmCall(format!(
+                "所有 LLM provider 均失败: {}",
+                errors.join(" | ")
+            )))
+        }
+    }
+
+    async fn call_text_with_provider(
+        &self,
+        provider: &LlmProviderConfig,
+        system: &str,
+        user: &str,
+        wants_json: bool,
+    ) -> AppResult<String> {
+        if !provider.is_configured() {
+            return Err(AppError::LlmNotConfigured);
+        }
+
         let mut last_error = None;
         for attempt in 1..=2 {
-            match self.call_text_once(system, user).await {
+            match self
+                .call_text_once(provider, system, user, wants_json)
+                .await
+            {
                 Ok(content) => return Ok(content),
                 Err(err) if attempt < 2 && err.is_retryable_llm_error() => {
-                    tracing::warn!("LLM 调用失败，将重试一次: {err}");
+                    tracing::warn!(
+                        provider = %provider.id,
+                        "LLM 调用失败，将在同 provider 内重试一次: {err}"
+                    );
                     last_error = Some(err);
                     tokio::time::sleep(std::time::Duration::from_millis(700)).await;
                 }
@@ -73,33 +295,48 @@ impl LlmClient {
         Err(last_error.unwrap_or_else(|| AppError::LlmCall("LLM 调用失败".to_string())))
     }
 
-    async fn call_text_once(&self, system: &str, user: &str) -> AppResult<String> {
-        let api_key = self.api_key.as_ref().ok_or(AppError::LlmNotConfigured)?;
+    async fn call_text_once(
+        &self,
+        provider: &LlmProviderConfig,
+        system: &str,
+        user: &str,
+        wants_json: bool,
+    ) -> AppResult<String> {
+        let api_key = provider
+            .api_key
+            .as_ref()
+            .ok_or(AppError::LlmNotConfigured)?;
 
-        let url = if self.uses_responses_api() {
-            format!("{}/responses", self.base_url.trim_end_matches('/'))
+        let url = if provider.prefer_responses_api {
+            format!("{}/responses", provider.base_url.trim_end_matches('/'))
         } else {
-            format!("{}/chat/completions", self.base_url.trim_end_matches('/'))
+            format!(
+                "{}/chat/completions",
+                provider.base_url.trim_end_matches('/')
+            )
         };
 
-        let body = if self.uses_responses_api() {
+        let body = if provider.prefer_responses_api {
             serde_json::json!({
-                "model": self.model,
+                "model": provider.model,
                 "input": [
                     { "role": "developer", "content": system },
                     { "role": "user", "content": user }
                 ],
             })
         } else {
-            serde_json::json!({
-                "model": self.model,
+            let mut body = serde_json::json!({
+                "model": provider.model,
                 "messages": [
                     { "role": "system", "content": system },
                     { "role": "user", "content": user }
                 ],
-                "temperature": 0.4,
-                "response_format": { "type": "json_object" },
-            })
+                "temperature": provider.temperature,
+            });
+            if wants_json {
+                body["response_format"] = serde_json::json!({ "type": "json_object" });
+            }
+            body
         };
 
         let resp = self
@@ -132,27 +369,11 @@ impl LlmClient {
             ))
         })?;
 
-        // 兼容两种 API 的响应结构
-        let content = if self.uses_responses_api() {
-            resp_json
-                .get("output")
-                .and_then(|o| o.get(0))
-                .and_then(|o| o.get("content"))
-                .and_then(|c| c.get(0))
-                .and_then(|c| c.get("text"))
-                .and_then(|t| t.as_str())
-                .unwrap_or("")
+        Ok(if provider.prefer_responses_api {
+            parse_responses_content(&resp_json)
         } else {
-            resp_json
-                .get("choices")
-                .and_then(|c| c.get(0))
-                .and_then(|c| c.get("message"))
-                .and_then(|m| m.get("content"))
-                .and_then(|c| c.as_str())
-                .unwrap_or("")
-        };
-
-        Ok(content.to_string())
+            parse_chat_completion_content(&resp_json)
+        })
     }
 
     async fn repair_json(
@@ -170,8 +391,52 @@ impl LlmClient {
              待修复 JSON：\n{raw_json}",
         );
 
-        self.call_text(repair_system, &repair_user).await
+        self.call_text_with_role(LlmRole::Repair, repair_system, &repair_user, false)
+            .await
     }
+
+    fn providers_for_role(&self, role: LlmRole) -> Vec<&LlmProviderConfig> {
+        let route = self
+            .role_routes
+            .get(&role)
+            .or_else(|| self.role_routes.get(&LlmRole::Default))
+            .unwrap_or(&self.default_route);
+        let mut seen = HashSet::new();
+        route
+            .iter()
+            .chain(self.default_route.iter())
+            .filter_map(|id| {
+                if !seen.insert(id) {
+                    return None;
+                }
+                self.providers.get(id)
+            })
+            .filter(|provider| provider.is_configured())
+            .collect()
+    }
+}
+
+fn parse_responses_content(resp_json: &Value) -> String {
+    resp_json
+        .get("output")
+        .and_then(|o| o.get(0))
+        .and_then(|o| o.get("content"))
+        .and_then(|c| c.get(0))
+        .and_then(|c| c.get("text"))
+        .and_then(|t| t.as_str())
+        .unwrap_or("")
+        .to_string()
+}
+
+fn parse_chat_completion_content(resp_json: &Value) -> String {
+    resp_json
+        .get("choices")
+        .and_then(|c| c.get(0))
+        .and_then(|c| c.get("message"))
+        .and_then(|m| m.get("content"))
+        .and_then(|c| c.as_str())
+        .unwrap_or("")
+        .to_string()
 }
 
 /// 容错 JSON 解析：容忍 ```json ... ``` 代码块包裹
@@ -180,7 +445,6 @@ fn parse_json_lenient(raw: &str) -> Result<Value, serde_json::Error> {
     if trimmed.starts_with('{') || trimmed.starts_with('[') {
         return serde_json::from_str(trimmed);
     }
-    // 尝试去掉 markdown 代码块
     if let Some(start) = trimmed.find('{')
         && let Some(end) = trimmed.rfind('}')
     {
@@ -223,28 +487,45 @@ fn error_excerpt(raw: &str, line: usize, column: usize) -> String {
     truncate(&excerpt, 800)
 }
 
-/// 占位类型让 #[derive(Deserialize)] 不被警告
-#[derive(Deserialize)]
-struct ChatResponse {
-    choices: Vec<ChatChoice>,
-}
-#[derive(Deserialize)]
-struct ChatChoice {
-    message: ChatMessage,
-}
-#[derive(Deserialize)]
-struct ChatMessage {
-    content: String,
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-// 抑制未使用警告（保留备用）
-impl ChatResponse {
-    #[allow(dead_code)]
-    fn into_content(self) -> String {
-        self.choices
-            .into_iter()
-            .next()
-            .map(|c| c.message.content)
-            .unwrap_or_default()
+    #[test]
+    fn role_parsing_accepts_agent_aliases() {
+        assert_eq!("reader".parse::<LlmRole>().unwrap(), LlmRole::Reader);
+        assert_eq!("json-repair".parse::<LlmRole>().unwrap(), LlmRole::Repair);
+        assert!("unknown".parse::<LlmRole>().is_err());
+    }
+
+    #[test]
+    fn role_route_falls_back_to_default_provider() {
+        let primary = LlmProviderConfig {
+            id: "primary".to_string(),
+            api_key: None,
+            base_url: "https://example.test/v1".to_string(),
+            model: "primary-model".to_string(),
+            temperature: 0.4,
+            prefer_responses_api: false,
+        };
+        let fallback = LlmProviderConfig {
+            id: "fallback".to_string(),
+            api_key: Some("key".to_string()),
+            base_url: "https://fallback.test/v1".to_string(),
+            model: "fallback-model".to_string(),
+            temperature: 0.2,
+            prefer_responses_api: false,
+        };
+        let mut routes = HashMap::new();
+        routes.insert(LlmRole::Default, vec!["fallback".to_string()]);
+        routes.insert(LlmRole::Reader, vec!["primary".to_string()]);
+        let client = LlmClient::from_profile(LlmProfileConfig {
+            providers: vec![primary, fallback],
+            role_routes: routes,
+        });
+
+        let providers = client.providers_for_role(LlmRole::Reader);
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].id, "fallback");
     }
 }

@@ -89,10 +89,54 @@ cp .env.example .env
 # 也支持 DeepSeek 等 OpenAI 兼容 API
 ```
 
+默认单 provider 配置仍然兼容：
+
+- `OPENAI_API_KEY`：OpenAI 兼容 API Key。
+- `OPENAI_BASE_URL=https://api.deepseek.com/v1`：可切换到 DeepSeek、OpenRouter、硅基流动等 OpenAI 兼容端点。
+- `OPENAI_MODEL=deepseek-chat`：当前 provider 使用的模型。
+
+如果你把产品开放给其他用户，页面右上角的 **AI 使用方式** 支持两种模式：
+
+- **使用 EasyPaper AI**：用户不需要配置 API Key，后端使用产品托管 provider。正式上线前应接入登录、订阅校验、额度和用量记录。
+- **使用自己的 Provider**：用户在浏览器里填入 DeepSeek、OpenAI、OpenRouter 等 provider 和 API Key。该配置保存在用户自己的浏览器 localStorage 中，并随上传、重试、概念深潜请求临时发送给后端使用；当前版本不会把用户 API Key 写入 SQLite。
+
+没有账号系统时，推荐先开放自带 Provider 模式；托管 EasyPaper AI 模式适合接入订阅服务后提供给普通用户。
+
+如果要同时配置多个 LLM provider，可使用 provider profile：
+
+```bash
+EASYPAPER_LLM_PROVIDERS=deepseek,openai
+
+EASYPAPER_LLM_PROVIDER_DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
+EASYPAPER_LLM_PROVIDER_DEEPSEEK_MODEL=deepseek-chat
+EASYPAPER_LLM_PROVIDER_DEEPSEEK_API_KEY_ENV=DEEPSEEK_API_KEY
+DEEPSEEK_API_KEY=sk-...
+
+EASYPAPER_LLM_PROVIDER_OPENAI_BASE_URL=https://api.openai.com/v1
+EASYPAPER_LLM_PROVIDER_OPENAI_MODEL=gpt-4o-mini
+EASYPAPER_LLM_PROVIDER_OPENAI_API_KEY_ENV=OPENAI_API_KEY
+EASYPAPER_LLM_PROVIDER_OPENAI_RESPONSES_API=true
+
+EASYPAPER_LLM_ROUTE_DEFAULT=deepseek,openai
+EASYPAPER_LLM_ROUTE_READER=deepseek,openai
+EASYPAPER_LLM_ROUTE_SPECIALIST=deepseek,openai
+EASYPAPER_LLM_ROUTE_CONCEPT=deepseek,openai
+EASYPAPER_LLM_ROUTE_REPAIR=openai,deepseek
+EASYPAPER_LLM_ROUTE_STUDY=deepseek,openai
+EASYPAPER_LLM_ROUTE_LITERATURE=openai,deepseek
+EASYPAPER_LLM_ROUTE_TRANSLATION=deepseek,openai
+```
+
+每个 route 都是 fallback 顺序。比如 `EASYPAPER_LLM_ROUTE_READER=deepseek,openai` 表示 reader agent 先用 DeepSeek，失败后自动切 OpenAI；未单独配置的 agent role 会走 `EASYPAPER_LLM_ROUTE_DEFAULT`。
+
+阅读页包含 **研究地图** 模块，会生成论文启发、结构逻辑、前提知识、继续研究方向、文献脉络、前后继研究和中文翻译摘要。该模块由独立的 Study Pack workflow 生成并缓存，不会混入主解读器。
+
 可选缓存策略：
 
 - `EASYPAPER_CONCEPT_PREWARM_LIMIT=3`：论文解读完成后，后台预热前 N 个概念深潜结果；设为 `0` 可关闭。
+- `EASYPAPER_CONCEPT_PREWARM_CONCURRENCY=1`：后台概念预热的全局并发数，避免多篇论文同时完成时打满 LLM。
 - `EASYPAPER_CONCEPT_CACHE_TTL_DAYS=7`：概念深潜缓存保留天数；过期缓存会在服务启动时清理。
+- `EASYPAPER_CORS_ORIGINS=https://your-domain.com`：生产环境可配置 CORS 白名单；未配置时保持本地开发友好的开放策略。
 
 ### 3. 启动开发
 

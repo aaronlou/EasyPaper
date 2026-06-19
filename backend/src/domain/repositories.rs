@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use crate::domain::interpretation::Interpretation;
 use crate::domain::paper::{Paper, PaperSummary};
+use crate::domain::study_pack::StudyPack;
 
 /// 论文聚合仓储端口。
 ///
@@ -19,6 +20,12 @@ pub trait PaperRepository: Send + Sync + 'static {
         &self,
         paper_id: uuid::Uuid,
     ) -> anyhow::Result<Option<Interpretation>>;
+    async fn save_study_pack(&self, pack: &StudyPack, cache_version: &str) -> anyhow::Result<()>;
+    async fn get_study_pack(
+        &self,
+        paper_id: uuid::Uuid,
+        cache_version: &str,
+    ) -> anyhow::Result<Option<StudyPack>>;
 }
 
 pub type SharedPaperRepository = Arc<dyn PaperRepository>;

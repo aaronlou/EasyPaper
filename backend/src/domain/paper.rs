@@ -78,6 +78,19 @@ pub enum PaperLifecycleError {
     InvalidTransition { from: PaperStatus, to: PaperStatus },
 }
 
+/// Persisted representation used to rebuild a paper aggregate from storage.
+#[derive(Debug, Clone)]
+pub struct PaperRecord {
+    pub id: Uuid,
+    pub filename: String,
+    pub title: String,
+    pub authors: Vec<String>,
+    pub full_text: String,
+    pub status: PaperStatus,
+    pub created_at: String,
+    pub completed_at: Option<String>,
+}
+
 impl Paper {
     pub fn new_uploaded(
         filename: String,
@@ -103,27 +116,18 @@ impl Paper {
     ///
     /// The derived `char_count` is intentionally recomputed from `full_text` so
     /// the aggregate keeps a single source of truth for this invariant.
-    pub fn rehydrate(
-        id: Uuid,
-        filename: String,
-        title: String,
-        authors: Vec<String>,
-        full_text: String,
-        status: PaperStatus,
-        created_at: String,
-        completed_at: Option<String>,
-    ) -> Self {
-        let char_count = full_text.chars().count();
+    pub fn rehydrate(record: PaperRecord) -> Self {
+        let char_count = record.full_text.chars().count();
         Self {
-            id,
-            filename,
-            title,
-            authors,
-            full_text,
+            id: record.id,
+            filename: record.filename,
+            title: record.title,
+            authors: record.authors,
+            full_text: record.full_text,
             char_count,
-            status,
-            created_at,
-            completed_at,
+            status: record.status,
+            created_at: record.created_at,
+            completed_at: record.completed_at,
         }
     }
 

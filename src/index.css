@@ -28,9 +28,9 @@ html {
 
 .reader-panel {
   border: 1px solid var(--color-border);
-  border-radius: 14px;
+  border-radius: 8px;
   background: var(--color-surface);
-  box-shadow: 0 18px 50px rgb(15 23 42 / 0.06);
+  box-shadow: 0 10px 24px rgb(15 23 42 / 0.04);
 }
 
 .reader-hero {

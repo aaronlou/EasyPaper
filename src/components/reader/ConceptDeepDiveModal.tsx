@@ -41,9 +41,9 @@ type TabKey = "explain" | "mechanism" | "demo" | "calibrate" | "evidence";
 
 const tabs: { key: TabKey; label: string; icon: React.ReactNode }[] = [
   { key: "explain", label: "解释", icon: <Lightbulb className="h-4 w-4" /> },
-  { key: "mechanism", label: "机制", icon: <Layers3 className="h-4 w-4" /> },
-  { key: "demo", label: "互动", icon: <SlidersHorizontal className="h-4 w-4" /> },
-  { key: "calibrate", label: "校准", icon: <HelpCircle className="h-4 w-4" /> },
+  { key: "mechanism", label: "机制链", icon: <Layers3 className="h-4 w-4" /> },
+  { key: "demo", label: "试一试", icon: <SlidersHorizontal className="h-4 w-4" /> },
+  { key: "calibrate", label: "理解校准", icon: <HelpCircle className="h-4 w-4" /> },
   { key: "evidence", label: "证据", icon: <BookOpen className="h-4 w-4" /> },
 ];
 
@@ -361,54 +361,76 @@ function MechanismTab({
   const step = steps[activeStep] ?? steps[0];
 
   return (
-    <div className="grid gap-5 lg:grid-cols-[260px_minmax(0,1fr)]">
-      <div className="space-y-2">
-        {steps.map((item, index) => (
-          <button
-            key={`${item.title}-${index}`}
-            onClick={() => onStepChange(index)}
-            className={cn(
-              "flex w-full items-center gap-3 rounded-xl border p-3 text-left transition",
-              activeStep === index
-                ? "border-sky-300 bg-sky-50 shadow-sm"
-                : "border-slate-200 bg-white hover:border-sky-200 hover:bg-slate-50",
-            )}
-          >
-            <span
+    <div className="space-y-5">
+      <section className="rounded-xl border border-slate-200 bg-white p-4">
+        <PanelTitle icon={<Layers3 className="h-4 w-4" />} title="机制链要回答的问题" />
+        <p className="text-sm leading-7 text-slate-600">
+          不从术语定义开始，而是看这个概念在论文里如何介入：先遇到什么情况，它做了什么，结果为什么变得更清楚。
+        </p>
+      </section>
+
+      <div className="grid gap-5 lg:grid-cols-[280px_minmax(0,1fr)]">
+        <div className="space-y-2">
+          {steps.map((item, index) => (
+            <button
+              key={`${item.title}-${index}`}
+              onClick={() => onStepChange(index)}
               className={cn(
-                "flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-semibold",
-                activeStep === index ? "bg-sky-600 text-white" : "bg-slate-100 text-slate-500",
+                "grid w-full grid-cols-[34px_minmax(0,1fr)] gap-3 rounded-xl border p-3 text-left transition",
+                activeStep === index
+                  ? "border-sky-300 bg-sky-50 shadow-sm"
+                  : "border-slate-200 bg-white hover:border-sky-200 hover:bg-slate-50",
               )}
             >
-              {index + 1}
-            </span>
-            <span className="text-sm font-semibold text-slate-800">{item.title}</span>
-          </button>
-        ))}
-      </div>
+              <span
+                className={cn(
+                  "flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-semibold",
+                  activeStep === index ? "bg-sky-600 text-white" : "bg-slate-100 text-slate-500",
+                )}
+              >
+                {index + 1}
+              </span>
+              <span>
+                <span className="block text-sm font-semibold leading-5 text-slate-800">
+                  {item.title || `第 ${index + 1} 步`}
+                </span>
+                {item.why_it_matters && (
+                  <span className="mt-1 line-clamp-2 block text-xs leading-5 text-slate-500">
+                    {item.why_it_matters}
+                  </span>
+                )}
+              </span>
+            </button>
+          ))}
+        </div>
 
-      <div className="rounded-2xl border border-slate-200 bg-white p-5">
-        <div className="mb-5 flex items-center justify-between gap-4">
-          <div>
-            <div className="text-xs font-semibold uppercase text-sky-600">
-              Step {activeStep + 1}
+        <div className="rounded-2xl border border-slate-200 bg-white p-5">
+          <div className="mb-5 flex items-start justify-between gap-4">
+            <div>
+              <div className="text-xs font-semibold uppercase text-sky-600">
+                第 {activeStep + 1} 步
+              </div>
+              <h3 className="mt-1 text-2xl font-semibold leading-tight text-slate-950">
+                {step.title || "看概念如何介入"}
+              </h3>
             </div>
-            <h3 className="mt-1 text-2xl font-semibold text-slate-950">{step.title}</h3>
+            <Layers3 className="h-8 w-8 shrink-0 text-slate-300" />
           </div>
-          <Layers3 className="h-8 w-8 text-slate-300" />
-        </div>
 
-        <div className="grid gap-3 md:grid-cols-[1fr_44px_1fr_44px_1fr]">
-          <MechanismCell label="输入" value={step.input} tone="slate" />
-          <ArrowConnector />
-          <MechanismCell label="处理" value={step.process} tone="sky" />
-          <ArrowConnector />
-          <MechanismCell label="输出" value={step.output} tone="emerald" />
-        </div>
+          <div className="grid gap-3 xl:grid-cols-[1fr_38px_1fr_38px_1fr]">
+            <MechanismCell label="先遇到什么" value={step.input} tone="slate" />
+            <ArrowConnector />
+            <MechanismCell label="概念做了什么" value={step.process} tone="sky" />
+            <ArrowConnector />
+            <MechanismCell label="结果变成什么" value={step.output} tone="emerald" />
+          </div>
 
-        <div className="mt-5 rounded-xl border border-amber-100 bg-amber-50 p-4">
-          <div className="mb-1 text-sm font-semibold text-amber-800">为什么关键</div>
-          <p className="text-sm leading-7 text-slate-700">{step.why_it_matters}</p>
+          <div className="mt-5 rounded-xl border border-amber-100 bg-amber-50 p-4">
+            <div className="mb-1 text-sm font-semibold text-amber-800">这一点为什么重要</div>
+            <p className="text-sm leading-7 text-slate-700">
+              {step.why_it_matters || "这一步帮助你把概念从一个名词，变成论文机制里可追踪的一环。"}
+            </p>
+          </div>
         </div>
       </div>
     </div>
@@ -433,38 +455,29 @@ function DemoTab({
     ? demo.knobs.reduce((sum, knob) => sum + (knobValues[knob.name] ?? knob.default_value ?? 50), 0) /
       demo.knobs.length
     : 50;
+  const readout = demoReadout(average);
 
   return (
     <div className="space-y-5">
-      <section className="rounded-2xl border border-slate-200 bg-white p-5">
-        <PanelTitle icon={<FlaskConical className="h-4 w-4" />} title={demo.title || "互动解释"} />
-        <p className="text-sm leading-7 text-slate-600">{demo.prompt}</p>
+      <section className="rounded-xl border border-slate-200 bg-white p-4">
+        <PanelTitle icon={<FlaskConical className="h-4 w-4" />} title={demo.title || "思想实验"} />
+        <p className="text-sm leading-7 text-slate-600">
+          {demo.prompt}
+        </p>
       </section>
 
-      <section className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_300px]">
-        <div className="rounded-2xl border border-slate-200 bg-[#f7fbff] p-5">
-          <div className="mb-5 flex items-center justify-between">
-            <div>
-              <div className="text-xs font-semibold uppercase text-slate-400">Concept Response</div>
-              <div className="mt-1 text-xl font-semibold text-slate-950">
-                {average >= 66 ? "概念优势明显" : average >= 36 ? "概念开始显形" : "概念作用较弱"}
-              </div>
+      <section className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="rounded-2xl border border-slate-200 bg-white p-5">
+          <div className="mb-4">
+            <div className="text-xs font-semibold uppercase text-slate-400">
+              改变这些条件
             </div>
-            <div className="relative h-20 w-20 rounded-full border-8 border-slate-200 bg-white">
-              <div
-                className="absolute inset-[-8px] rounded-full border-8 border-sky-500"
-                style={{
-                  clipPath: `polygon(50% 50%, 50% 0, ${50 + average / 2}% 0, 100% 100%, 0 100%, 0 0)`,
-                  opacity: 0.25 + average / 140,
-                }}
-              />
-              <div className="absolute inset-0 flex items-center justify-center text-lg font-bold text-slate-900">
-                {Math.round(average)}
-              </div>
-            </div>
+            <h3 className="mt-1 text-xl font-semibold text-slate-950">
+              看概念什么时候变得必要
+            </h3>
           </div>
 
-          <div className="grid gap-3 md:grid-cols-2">
+          <div className="space-y-3">
             {demo.knobs.map((knob) => (
               <KnobControl
                 key={knob.name}
@@ -476,33 +489,55 @@ function DemoTab({
           </div>
         </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-4">
-          <div className="mb-3 text-sm font-semibold text-slate-900">切换场景</div>
-          <div className="space-y-2">
-            {demo.scenarios.map((item, index) => (
-              <button
-                key={`${item.label}-${index}`}
-                onClick={() => onScenarioChange(index)}
-                className={cn(
-                  "w-full rounded-lg border px-3 py-2 text-left text-sm transition",
-                  activeScenario === index
-                    ? "border-sky-300 bg-sky-50 text-sky-800"
-                    : "border-slate-200 text-slate-600 hover:bg-slate-50",
-                )}
-              >
-                {item.label}
-              </button>
-            ))}
+        <div className="space-y-4">
+          <div className="rounded-2xl border border-slate-200 bg-slate-950 p-5 text-white">
+            <div className="text-xs font-semibold uppercase text-slate-400">当前观察</div>
+            <div className="mt-2 text-xl font-semibold">{readout.title}</div>
+            <p className="mt-2 text-sm leading-7 text-slate-300">{readout.body}</p>
+            <div className="mt-4 h-2 overflow-hidden rounded-full bg-white/10">
+              <div
+                className="h-full rounded-full bg-sky-400 transition-all"
+                style={{ width: `${Math.round(average)}%` }}
+              />
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-4">
+            <div className="mb-3 text-sm font-semibold text-slate-900">选择一个论文场景</div>
+            <div className="space-y-2">
+              {demo.scenarios.map((item, index) => (
+                <button
+                  key={`${item.label}-${index}`}
+                  onClick={() => onScenarioChange(index)}
+                  className={cn(
+                    "w-full rounded-lg border px-3 py-2 text-left text-sm transition",
+                    activeScenario === index
+                      ? "border-sky-300 bg-sky-50 text-sky-800"
+                      : "border-slate-200 text-slate-600 hover:bg-slate-50",
+                  )}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       </section>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-5">
-        <div className="mb-2 text-sm font-semibold text-slate-900">{scenario.label}</div>
-        <p className="text-sm leading-7 text-slate-600">{scenario.observation}</p>
-        <p className="mt-3 rounded-xl bg-slate-50 p-3 text-sm leading-7 text-slate-700">
-          {scenario.explanation}
-        </p>
+        <div className="mb-2 text-sm font-semibold text-slate-900">
+          场景：{scenario.label}
+        </div>
+        <div className="grid gap-3 md:grid-cols-2">
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <div className="mb-1 text-xs font-semibold uppercase text-slate-400">你会看到</div>
+            <p className="text-sm leading-7 text-slate-700">{scenario.observation}</p>
+          </div>
+          <div className="rounded-xl border border-sky-100 bg-sky-50 p-4">
+            <div className="mb-1 text-xs font-semibold uppercase text-sky-700">这说明</div>
+            <p className="text-sm leading-7 text-slate-700">{scenario.explanation}</p>
+          </div>
+        </div>
       </section>
     </div>
   );
@@ -521,15 +556,25 @@ function CalibrateTab({
 }) {
   return (
     <div className="space-y-6">
+      <section className="rounded-xl border border-slate-200 bg-white p-4">
+        <PanelTitle icon={<HelpCircle className="h-4 w-4" />} title="校准的目的" />
+        <p className="text-sm leading-7 text-slate-600">
+          这里不是考试，而是检查你有没有把概念理解成空泛标签。先看“没有它”和“理解它之后”的差别，再用选择题确认自己是否抓住机制。
+        </p>
+      </section>
+
       <section>
-        <PanelTitle icon={<GitCompare className="h-4 w-4" />} title="反事实对比" />
+        <PanelTitle icon={<GitCompare className="h-4 w-4" />} title="反事实对比：差别到底在哪里" />
         <div className="grid gap-3">
           {contrasts.map((item, index) => (
             <div key={`${item.label}-${index}`} className="rounded-2xl border border-slate-200 bg-white p-4">
               <div className="mb-3 text-sm font-semibold text-slate-900">{item.label}</div>
-              <div className="grid gap-3 md:grid-cols-2">
-                <ContrastPanel title="没有这个概念" text={item.without_concept} muted />
-                <ContrastPanel title="理解这个概念后" text={item.with_concept} />
+              <div className="grid gap-3 lg:grid-cols-[1fr_36px_1fr]">
+                <ContrastPanel title="如果没有这个概念" text={item.without_concept} muted />
+                <div className="hidden items-center justify-center lg:flex">
+                  <ArrowRight className="h-5 w-5 text-slate-300" />
+                </div>
+                <ContrastPanel title="用上这个概念之后" text={item.with_concept} />
               </div>
               <p className="mt-3 rounded-xl bg-amber-50 p-3 text-sm leading-7 text-slate-700">
                 {item.lesson}
@@ -540,17 +585,18 @@ function CalibrateTab({
       </section>
 
       <section>
-        <PanelTitle icon={<HelpCircle className="h-4 w-4" />} title="理解校准" />
+        <PanelTitle icon={<HelpCircle className="h-4 w-4" />} title="自测：能不能用自己的话判断" />
         <div className="space-y-4">
           {questions.map((question, questionIndex) => {
             const selected = answers[questionIndex];
+            const answered = selected !== undefined;
+            const correct = answered ? question.options[selected]?.correct : false;
             return (
               <div key={`${question.question}-${questionIndex}`} className="rounded-2xl border border-slate-200 bg-white p-4">
                 <div className="font-semibold leading-6 text-slate-900">{question.question}</div>
                 <div className="mt-3 grid gap-2">
                   {question.options.map((option, optionIndex) => {
                     const picked = selected === optionIndex;
-                    const answered = selected !== undefined;
                     return (
                       <button
                         key={`${option.text}-${optionIndex}`}
@@ -576,10 +622,18 @@ function CalibrateTab({
                     );
                   })}
                 </div>
-                {selected !== undefined && (
-                  <p className="mt-3 rounded-xl bg-slate-50 p-3 text-sm leading-7 text-slate-700">
-                    {question.explanation}
-                  </p>
+                {answered && (
+                  <div
+                    className={cn(
+                      "mt-3 rounded-xl p-3 text-sm leading-7",
+                      correct ? "bg-emerald-50 text-emerald-900" : "bg-amber-50 text-slate-700",
+                    )}
+                  >
+                    <div className="mb-1 font-semibold">
+                      {correct ? "判断是对的" : "这里需要再转一步"}
+                    </div>
+                    <p>{question.explanation}</p>
+                  </div>
                 )}
               </div>
             );
@@ -774,7 +828,7 @@ function MechanismCell({
 
 function ArrowConnector() {
   return (
-    <div className="hidden items-center justify-center md:flex">
+    <div className="hidden items-center justify-center xl:flex">
       <ArrowRight className="h-5 w-5 text-slate-300" />
     </div>
   );
@@ -790,10 +844,10 @@ function KnobControl({
   onChange: (value: number) => void;
 }) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4">
+    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
       <div className="mb-2 flex items-center justify-between gap-3">
         <div className="text-sm font-semibold text-slate-900">{knob.name}</div>
-        <div className="font-mono text-xs text-slate-400">{value}</div>
+        <div className="font-mono text-xs text-slate-400">{value}/100</div>
       </div>
       <input
         type="range"
@@ -808,7 +862,7 @@ function KnobControl({
         <span>{knob.low_label}</span>
         <span>{knob.high_label}</span>
       </div>
-      <p className="mt-3 text-xs leading-5 text-slate-500">{knob.effect}</p>
+      <p className="mt-3 text-xs leading-5 text-slate-600">{knob.effect}</p>
     </div>
   );
 }
@@ -889,6 +943,25 @@ function confidenceStyle(confidence: string) {
   if (confidence === "high") return "bg-emerald-100 text-emerald-700";
   if (confidence === "low") return "bg-rose-100 text-rose-700";
   return "bg-amber-100 text-amber-700";
+}
+
+function demoReadout(value: number) {
+  if (value >= 66) {
+    return {
+      title: "这个概念开始变得必要",
+      body: "当前条件下，直接凭直觉处理问题会变得吃力。概念的作用是帮你组织变量、压缩复杂度，并解释为什么论文方法要这样设计。",
+    };
+  }
+  if (value >= 36) {
+    return {
+      title: "这个概念正在显形",
+      body: "现在已经能看到概念的作用，但还不够强。继续观察场景差异，重点看输入、处理和输出之间的关系在哪里发生变化。",
+    };
+  }
+  return {
+    title: "这个概念暂时像普通标签",
+    body: "条件还不够复杂时，概念看起来可能只是一个名词。真正理解它，需要把它放到论文的约束、证据和失败模式里。",
+  };
 }
 
 interface LearningModel {

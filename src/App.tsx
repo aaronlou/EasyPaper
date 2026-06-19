@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
+import { Settings2 } from "lucide-react";
 import { usePaperStore } from "@/stores/usePaperStore";
+import AiSettingsModal from "@/components/AiSettingsModal";
 import UploadView from "@/views/UploadView";
 import ProcessingView from "@/views/ProcessingView";
 import ReaderView from "@/views/ReaderView";
@@ -9,6 +11,7 @@ type View = "upload" | "processing" | "reader";
 export default function App() {
   const [view, setView] = useState<View>("upload");
   const [currentPaperId, setCurrentPaperId] = useState<string | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const { checkHealth, loadPapers } = usePaperStore();
 
@@ -48,11 +51,21 @@ export default function App() {
         >
           📄 EasyPaper
         </button>
-        {currentPaperId && (
-          <span className="text-xs text-gray-400 font-mono">
-            {currentPaperId.slice(0, 8)}
-          </span>
-        )}
+        <div className="flex items-center gap-3">
+          {currentPaperId && (
+            <span className="text-xs text-gray-400 font-mono">
+              {currentPaperId.slice(0, 8)}
+            </span>
+          )}
+          <button
+            onClick={() => setSettingsOpen(true)}
+            className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 transition hover:border-sky-300 hover:text-sky-700"
+            aria-label="AI 模型配置"
+            title="AI 模型配置"
+          >
+            <Settings2 className="h-4 w-4" />
+          </button>
+        </div>
       </header>
 
       {/* 视图切换 */}
@@ -70,6 +83,11 @@ export default function App() {
       {view === "reader" && currentPaperId && (
         <ReaderView paperId={currentPaperId} />
       )}
+      <AiSettingsModal
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        onSaved={checkHealth}
+      />
     </div>
   );
 }

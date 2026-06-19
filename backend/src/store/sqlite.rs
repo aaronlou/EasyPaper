@@ -5,8 +5,9 @@ use std::str::FromStr;
 use uuid::Uuid;
 
 use crate::domain::interpretation::Interpretation;
-use crate::domain::paper::{Paper, PaperStatus, PaperSummary};
+use crate::domain::paper::{Paper, PaperRecord, PaperStatus, PaperSummary};
 use crate::domain::repositories::PaperRepository;
+use crate::domain::study_pack::StudyPack;
 use crate::error::AppError;
 use crate::{application::ports::ConceptExpansionCache, models::api::ConceptExpansion};
 
@@ -27,6 +28,7 @@ impl SqliteStore {
 
         // 建表（idempotent）
         sqlx::query(SCHEMA).execute(&pool).await?;
+        run_lightweight_migrations(&pool).await?;
 
         tracing::info!("SQLite 初始化完成：{}", db_path.display());
         Ok(Self { pool })
@@ -109,7 +111,7 @@ impl PaperRepository for SqliteStore {
         let authors: Vec<String> = serde_json::from_str(&authors_json).unwrap_or_default();
         let status = PaperStatus::from_str(&status_str)?;
 
-        Ok(Some(Paper::rehydrate(
+        Ok(Some(Paper::rehydrate(PaperRecord {
             id,
             filename,
             title,
@@ -118,7 +120,7 @@ impl PaperRepository for SqliteStore {
             status,
             created_at,
             completed_at,
-        )))
+        })))
     }
 
     async fn list_papers(&self) -> anyhow::Result<Vec<PaperSummary>> {
@@ -167,16 +169,16 @@ impl PaperRepository for SqliteStore {
             let authors_json: String = row.get(3);
             let authors: Vec<String> = serde_json::from_str(&authors_json).unwrap_or_default();
             let status_str: String = row.get(5);
-            out.push(Paper::rehydrate(
-                Uuid::parse_str(&id_str)?,
-                row.get(1),
-                row.get(2),
+            out.push(Paper::rehydrate(PaperRecord {
+                id: Uuid::parse_str(&id_str)?,
+                filename: row.get(1),
+                title: row.get(2),
                 authors,
-                row.get(4),
-                PaperStatus::from_str(&status_str)?,
-                row.get(6),
-                row.get(7),
-            ));
+                full_text: row.get(4),
+                status: PaperStatus::from_str(&status_str)?,
+                created_at: row.get(6),
+                completed_at: row.get(7),
+            }));
         }
 
         Ok(out)
@@ -219,6 +221,51 @@ impl PaperRepository for SqliteStore {
             serde_json::from_str(&json).map_err(|e| AppError::Internal(e.into()))?;
         Ok(Some(interp))
     }
+
+    async fn save_study_pack(&self, pack: &StudyPack, cache_version: &str) -> anyhow::Result<()> {
+        let json = serde_json::to_string(pack)?;
+
+        sqlx::query(
+            "INSERT INTO study_packs (paper_id, cache_version, pack_json)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(paper_id) DO UPDATE SET
+                cache_version = excluded.cache_version,
+                pack_json = excluded.pack_json,
+                updated_at = datetime('now')",
+        )
+        .bind(pack.paper_id.to_string())
+        .bind(cache_version)
+        .bind(&json)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    async fn get_study_pack(
+        &self,
+        paper_id: Uuid,
+        cache_version: &str,
+    ) -> anyhow::Result<Option<StudyPack>> {
+        let row = sqlx::query(
+            "SELECT pack_json
+             FROM study_packs
+             WHERE paper_id = ?1
+               AND cache_version = ?2",
+        )
+        .bind(paper_id.to_string())
+        .bind(cache_version)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        let json: String = row.get(0);
+        let pack = serde_json::from_str(&json).map_err(|e| AppError::Internal(e.into()))?;
+        Ok(Some(pack))
+    }
 }
 
 #[async_trait]
@@ -227,6 +274,7 @@ impl ConceptExpansionCache for SqliteStore {
         &self,
         paper_id: Uuid,
         concept_id: &str,
+        cache_version: &str,
         max_age_days: i64,
     ) -> anyhow::Result<Option<ConceptExpansion>> {
         let row = sqlx::query(
@@ -234,10 +282,12 @@ impl ConceptExpansionCache for SqliteStore {
              FROM concept_expansions
              WHERE paper_id = ?1
                AND concept_id = ?2
-               AND updated_at >= datetime('now', ?3)",
+               AND cache_version = ?3
+               AND updated_at >= datetime('now', ?4)",
         )
         .bind(paper_id.to_string())
         .bind(concept_id)
+        .bind(cache_version)
         .bind(format!("-{max_age_days} days"))
         .fetch_optional(&self.pool)
         .await?;
@@ -255,19 +305,22 @@ impl ConceptExpansionCache for SqliteStore {
         &self,
         paper_id: Uuid,
         concept_id: &str,
+        cache_version: &str,
         expansion: &ConceptExpansion,
     ) -> anyhow::Result<()> {
         let json = serde_json::to_string(expansion)?;
 
         sqlx::query(
-            "INSERT INTO concept_expansions (paper_id, concept_id, expansion_json)
-             VALUES (?1, ?2, ?3)
+            "INSERT INTO concept_expansions (paper_id, concept_id, cache_version, expansion_json)
+             VALUES (?1, ?2, ?3, ?4)
              ON CONFLICT(paper_id, concept_id) DO UPDATE SET
+                cache_version = excluded.cache_version,
                 expansion_json = excluded.expansion_json,
                 updated_at = datetime('now')",
         )
         .bind(paper_id.to_string())
         .bind(concept_id)
+        .bind(cache_version)
         .bind(&json)
         .execute(&self.pool)
         .await?;
@@ -312,13 +365,76 @@ CREATE TABLE IF NOT EXISTS interpretations (
 CREATE TABLE IF NOT EXISTS concept_expansions (
     paper_id       TEXT NOT NULL REFERENCES papers(id),
     concept_id     TEXT NOT NULL,
+    cache_version  TEXT NOT NULL DEFAULT 'concept-expansion-v1',
     expansion_json TEXT NOT NULL,
     created_at     TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at     TEXT NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (paper_id, concept_id)
 );
 
+CREATE TABLE IF NOT EXISTS study_packs (
+    paper_id      TEXT PRIMARY KEY REFERENCES papers(id),
+    cache_version TEXT NOT NULL,
+    pack_json     TEXT NOT NULL,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_papers_created ON papers(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_concept_expansions_updated
     ON concept_expansions(updated_at);
+CREATE INDEX IF NOT EXISTS idx_study_packs_updated
+    ON study_packs(updated_at);
 "#;
+
+async fn run_lightweight_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
+    ensure_column(
+        pool,
+        "concept_expansions",
+        "cache_version",
+        "TEXT NOT NULL DEFAULT 'concept-expansion-v1'",
+    )
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS study_packs (
+            paper_id      TEXT PRIMARY KEY REFERENCES papers(id),
+            cache_version TEXT NOT NULL,
+            pack_json     TEXT NOT NULL,
+            created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+        )",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_study_packs_updated
+         ON study_packs(updated_at)",
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+async fn ensure_column(
+    pool: &SqlitePool,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> anyhow::Result<()> {
+    let rows = sqlx::query(&format!("PRAGMA table_info({table})"))
+        .fetch_all(pool)
+        .await?;
+    let exists = rows
+        .iter()
+        .any(|row| row.get::<String, _>("name") == column);
+
+    if !exists {
+        sqlx::query(&format!(
+            "ALTER TABLE {table} ADD COLUMN {column} {definition}"
+        ))
+        .execute(pool)
+        .await?;
+    }
+
+    Ok(())
+}

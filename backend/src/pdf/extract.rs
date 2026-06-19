@@ -6,16 +6,15 @@ use crate::error::{AppError, AppResult};
 /// pdf-extract 0.7 只接受文件路径（AsRef<Path>），所以先把 bytes
 /// 写入临时文件，提取完再删除。
 pub fn extract_text(pdf_bytes: &[u8]) -> AppResult<ExtractedPaperText> {
-    // 写到临时文件
-    let tmp_dir = std::env::temp_dir();
-    let tmp_path = tmp_dir.join(format!("easypaper_{}.pdf", uuid::Uuid::new_v4()));
-    std::fs::write(&tmp_path, pdf_bytes)?;
+    let mut tmp_file = tempfile::Builder::new()
+        .prefix("easypaper_")
+        .suffix(".pdf")
+        .tempfile()?;
+    std::io::Write::write_all(&mut tmp_file, pdf_bytes)?;
+    let tmp_path = tmp_file.path().to_path_buf();
 
     let full_text =
         pdf_extract::extract_text(&tmp_path).map_err(|e| AppError::PdfExtract(e.to_string()))?;
-
-    // 清理临时文件
-    let _ = std::fs::remove_file(&tmp_path);
 
     // 启发式：从文本头部推断标题和作者
     let (title, authors) = infer_metadata(&full_text);

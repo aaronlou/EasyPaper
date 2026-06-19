@@ -26,6 +26,7 @@ pub trait ConceptExpansionCache: Send + Sync + 'static {
         &self,
         paper_id: Uuid,
         concept_id: &str,
+        cache_version: &str,
         max_age_days: i64,
     ) -> anyhow::Result<Option<ConceptExpansion>>;
 
@@ -33,6 +34,7 @@ pub trait ConceptExpansionCache: Send + Sync + 'static {
         &self,
         paper_id: Uuid,
         concept_id: &str,
+        cache_version: &str,
         expansion: &ConceptExpansion,
     ) -> anyhow::Result<()>;
 
