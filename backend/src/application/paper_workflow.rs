@@ -1,6 +1,6 @@
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
-use tokio::sync::{RwLock, Semaphore};
+use tokio::sync::{Mutex, RwLock, Semaphore};
 use uuid::Uuid;
 
 use crate::application::entitlements::{AiBillingMode, AiEntitlements};
@@ -15,6 +15,7 @@ use crate::llm::{Interpreter, LlmClient};
 use crate::models::api::{ClientLlmProfile, ProgressInfo};
 
 pub type ProgressStore = Arc<RwLock<std::collections::HashMap<Uuid, ProgressInfo>>>;
+pub type StudyPackInFlight = Arc<Mutex<HashSet<String>>>;
 
 #[derive(Clone)]
 pub struct PaperWorkflowDeps {
@@ -28,6 +29,7 @@ pub struct PaperWorkflowDeps {
     pub interpreter: Interpreter,
     pub research: SharedResearchSource,
     pub progress: ProgressStore,
+    pub study_pack_in_flight: StudyPackInFlight,
 }
 
 /// 论文学习工作流应用服务。
@@ -46,6 +48,7 @@ pub struct PaperWorkflow {
     pub(super) interpreter: Interpreter,
     pub(super) research: SharedResearchSource,
     pub(super) progress: ProgressStore,
+    pub(super) study_pack_in_flight: StudyPackInFlight,
     pub(super) entitlements: AiEntitlements,
     pub(super) ai_billing_mode: AiBillingMode,
 }
@@ -63,6 +66,7 @@ impl PaperWorkflow {
             interpreter: deps.interpreter,
             research: deps.research,
             progress: deps.progress,
+            study_pack_in_flight: deps.study_pack_in_flight,
             entitlements: AiEntitlements::new(),
             ai_billing_mode: AiBillingMode::Managed,
         }

@@ -66,6 +66,38 @@ pub struct ClientLlmRoutes {
 }
 
 impl ClientLlmProfile {
+    pub fn cache_key(&self) -> String {
+        if self.mode == ClientAiMode::Managed {
+            return "managed".to_string();
+        }
+
+        let mut providers = self
+            .providers
+            .iter()
+            .map(|provider| {
+                format!(
+                    "{}:{}:{}:{}:{}",
+                    provider.id.trim(),
+                    provider.base_url.trim(),
+                    provider.model.trim(),
+                    provider.temperature.clamp(0.0, 2.0),
+                    provider.responses_api
+                )
+            })
+            .collect::<Vec<_>>();
+        providers.sort_unstable();
+
+        format!(
+            "byok|providers={}|default={}|reader={}|specialist={}|concept={}|repair={}",
+            providers.join(";"),
+            route_key(&self.routes.default),
+            route_key(&self.routes.reader),
+            route_key(&self.routes.specialist),
+            route_key(&self.routes.concept),
+            route_key(&self.routes.repair),
+        )
+    }
+
     pub fn into_profile_config(self) -> Option<LlmProfileConfig> {
         if self.mode == ClientAiMode::Managed {
             return None;
@@ -136,6 +168,48 @@ fn normalize_route(route: Vec<String>, fallback: &[String]) -> Vec<String> {
         fallback.to_vec()
     } else {
         route
+    }
+}
+
+fn route_key(route: &[String]) -> String {
+    route
+        .iter()
+        .map(|item| item.trim())
+        .filter(|item| !item.is_empty())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn byok_cache_key_omits_api_key_but_keeps_model_config() {
+        let profile = ClientLlmProfile {
+            mode: ClientAiMode::Byok,
+            providers: vec![ClientLlmProvider {
+                id: "openai".to_string(),
+                base_url: "https://api.openai.com/v1".to_string(),
+                model: "gpt-4o-mini".to_string(),
+                api_key: Some("sk-secret".to_string()),
+                temperature: 0.4,
+                responses_api: true,
+            }],
+            routes: ClientLlmRoutes {
+                default: vec!["openai".to_string()],
+                reader: vec!["openai".to_string()],
+                specialist: Vec::new(),
+                concept: Vec::new(),
+                repair: Vec::new(),
+            },
+        };
+
+        let key = profile.cache_key();
+
+        assert!(key.contains("openai"));
+        assert!(key.contains("gpt-4o-mini"));
+        assert!(!key.contains("sk-secret"));
     }
 }
 

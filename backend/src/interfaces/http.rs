@@ -1,7 +1,7 @@
 use axum::{
     Router,
     extract::DefaultBodyLimit,
-    http::{HeaderValue, Method},
+    http::{HeaderValue, Method, header::CONTENT_TYPE},
     routing::{get, post},
 };
 use tower_http::{
@@ -46,7 +46,14 @@ pub fn router(config: &Config, state: AppState) -> Router {
 
 fn cors_layer(config: &Config) -> CorsLayer {
     if config.cors_origins.is_empty() {
-        return CorsLayer::permissive();
+        tracing::warn!("EASYPAPER_CORS_ORIGINS 未配置，默认仅允许本机开发地址访问 API");
+        return CorsLayer::new()
+            .allow_origin(AllowOrigin::list([
+                HeaderValue::from_static("http://localhost:5173"),
+                HeaderValue::from_static("http://127.0.0.1:5173"),
+            ]))
+            .allow_methods([Method::GET, Method::POST])
+            .allow_headers([CONTENT_TYPE]);
     }
 
     let origins = config
@@ -64,6 +71,7 @@ fn cors_layer(config: &Config) -> CorsLayer {
     CorsLayer::new()
         .allow_origin(AllowOrigin::list(origins))
         .allow_methods([Method::GET, Method::POST])
+        .allow_headers([CONTENT_TYPE])
 }
 
 fn api_router(state: AppState) -> Router {

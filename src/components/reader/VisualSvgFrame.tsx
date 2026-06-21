@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Maximize2, Minimize2 } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { sanitizeSvg } from "@/lib/sanitizeSvg";
 
 interface Props {
   svg: string;
@@ -10,6 +11,7 @@ interface Props {
 
 export default function VisualSvgFrame({ svg, caption, label }: Props) {
   const [expanded, setExpanded] = useState(false);
+  const safeSvg = useMemo(() => sanitizeSvg(svg), [svg]);
 
   return (
     <figure
@@ -38,13 +40,19 @@ export default function VisualSvgFrame({ svg, caption, label }: Props) {
         </button>
       </div>
 
-      <div
-        className={cn(
-          "visual-svg-frame flex justify-center overflow-auto bg-white p-4",
-          expanded ? "min-h-0 flex-1 items-center" : "max-h-[520px]",
-        )}
-        dangerouslySetInnerHTML={{ __html: svg }}
-      />
+      {safeSvg ? (
+        <div
+          className={cn(
+            "visual-svg-frame flex justify-center overflow-auto bg-white p-4",
+            expanded ? "min-h-0 flex-1 items-center" : "max-h-[520px]",
+          )}
+          dangerouslySetInnerHTML={{ __html: safeSvg }}
+        />
+      ) : (
+        <div className="bg-white px-4 py-6 text-sm text-slate-500">
+          图示格式无效，已跳过渲染。
+        </div>
+      )}
     </figure>
   );
 }

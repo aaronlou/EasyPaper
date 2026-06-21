@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 use crate::application::paper_workflow::{PaperWorkflow, PaperWorkflowDeps};
 use crate::application::ports::{SharedConceptExpansionCache, SharedPdfExtractor};
@@ -29,6 +29,7 @@ pub async fn build(config: Config) -> anyhow::Result<axum::Router> {
     let pdfs: SharedPdfExtractor = Arc::new(PdfExtractAdapter);
 
     let progress = Arc::new(RwLock::new(std::collections::HashMap::new()));
+    let study_pack_in_flight = Arc::new(Mutex::new(std::collections::HashSet::new()));
     let workflow = PaperWorkflow::new(PaperWorkflowDeps {
         papers: papers.clone(),
         pdfs: pdfs.clone(),
@@ -40,6 +41,7 @@ pub async fn build(config: Config) -> anyhow::Result<axum::Router> {
         interpreter: interpreter.clone(),
         research: research.clone(),
         progress: progress.clone(),
+        study_pack_in_flight,
     });
     workflow.recover_interrupted_work().await?;
 

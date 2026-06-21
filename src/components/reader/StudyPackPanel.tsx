@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   BookMarked,
   Compass,
@@ -24,6 +24,7 @@ import { cn } from "@/lib/cn";
 
 interface Props {
   paperId: string;
+  initialTab?: TabKey;
 }
 
 type TabKey =
@@ -123,11 +124,15 @@ const tabCopy: Record<TabKey, { eyebrow: string; title: string; description: str
   },
 };
 
-export default function StudyPackPanel({ paperId }: Props) {
+export default function StudyPackPanel({ paperId, initialTab }: Props) {
   const [pack, setPack] = useState<StudyPack | null>(null);
-  const [activeTab, setActiveTab] = useState<TabKey>("inspiration");
+  const [activeTab, setActiveTab] = useState<TabKey>(initialTab ?? "inspiration");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (initialTab) setActiveTab(initialTab);
+  }, [initialTab]);
 
   const load = async () => {
     setLoading(true);

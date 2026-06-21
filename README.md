@@ -136,7 +136,7 @@ EASYPAPER_LLM_ROUTE_TRANSLATION=deepseek,openai
 - `EASYPAPER_CONCEPT_PREWARM_LIMIT=3`：论文解读完成后，后台预热前 N 个概念深潜结果；设为 `0` 可关闭。
 - `EASYPAPER_CONCEPT_PREWARM_CONCURRENCY=1`：后台概念预热的全局并发数，避免多篇论文同时完成时打满 LLM。
 - `EASYPAPER_CONCEPT_CACHE_TTL_DAYS=7`：概念深潜缓存保留天数；过期缓存会在服务启动时清理。
-- `EASYPAPER_CORS_ORIGINS=https://your-domain.com`：生产环境可配置 CORS 白名单；未配置时保持本地开发友好的开放策略。
+- `EASYPAPER_CORS_ORIGINS=https://your-domain.com`：生产环境建议配置 CORS 白名单；未配置时仅允许 `localhost:5173` / `127.0.0.1:5173` 访问 API，方便本地开发。
 
 ### 3. 启动开发
 

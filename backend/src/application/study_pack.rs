@@ -18,15 +18,20 @@ impl PaperWorkflow {
         paper_id: Uuid,
         llm_profile: Option<ClientLlmProfile>,
     ) -> AppResult<StudyPack> {
+        let profile_cache_key = llm_profile
+            .as_ref()
+            .map(ClientLlmProfile::cache_key)
+            .unwrap_or_else(|| "managed".to_string());
         self.entitlements.record_workflow_start(
             AiBillingMode::from_profile(llm_profile.as_ref()),
             "study_pack",
         );
         let workflow = self.with_client_llm_profile(llm_profile);
+        let cache_version = workflow.study_pack_cache_version();
 
         if let Some(pack) = workflow
             .papers
-            .get_study_pack(paper_id, &workflow.study_pack_cache_version())
+            .get_study_pack(paper_id, &cache_version)
             .await
             .map_err(|e| AppError::Database(e.to_string()))?
         {
@@ -35,6 +40,18 @@ impl PaperWorkflow {
 
         if !workflow.llm.is_configured() {
             return Err(AppError::LlmNotConfigured);
+        }
+
+        let in_flight_key = format!("{paper_id}:{cache_version}:{profile_cache_key}");
+        let _guard = workflow.acquire_study_pack_slot(in_flight_key).await;
+
+        if let Some(pack) = workflow
+            .papers
+            .get_study_pack(paper_id, &cache_version)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?
+        {
+            return Ok(pack);
         }
 
         let paper = workflow
@@ -72,11 +89,25 @@ impl PaperWorkflow {
 
         workflow
             .papers
-            .save_study_pack(&pack, &workflow.study_pack_cache_version())
+            .save_study_pack(&pack, &cache_version)
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
 
         Ok(pack)
+    }
+
+    async fn acquire_study_pack_slot(&self, key: String) -> StudyPackSlotGuard {
+        loop {
+            let mut in_flight = self.study_pack_in_flight.lock().await;
+            if in_flight.insert(key.clone()) {
+                return StudyPackSlotGuard {
+                    key,
+                    in_flight: self.study_pack_in_flight.clone(),
+                };
+            }
+            drop(in_flight);
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        }
     }
 
     fn study_pack_cache_version(&self) -> String {
@@ -112,6 +143,21 @@ impl PaperWorkflow {
         } else {
             limit_chars(&lines.join("\n"), 6_000)
         }
+    }
+}
+
+struct StudyPackSlotGuard {
+    key: String,
+    in_flight: crate::application::paper_workflow::StudyPackInFlight,
+}
+
+impl Drop for StudyPackSlotGuard {
+    fn drop(&mut self) {
+        let key = self.key.clone();
+        let in_flight = self.in_flight.clone();
+        tokio::spawn(async move {
+            in_flight.lock().await.remove(&key);
+        });
     }
 }
 

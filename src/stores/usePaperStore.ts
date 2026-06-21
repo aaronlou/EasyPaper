@@ -4,6 +4,8 @@ import { create } from "zustand";
 import type { PaperDetail, PaperSummary } from "@/types";
 import * as api from "@/lib/api";
 
+let currentPaperRequestId = 0;
+
 interface PaperState {
   // 论文列表
   papers: PaperSummary[];
@@ -41,12 +43,17 @@ export const usePaperStore = create<PaperState>((set, get) => ({
   current: null,
   loadingCurrent: false,
   loadPaper: async (id) => {
+    const requestId = ++currentPaperRequestId;
     set({ loadingCurrent: true, current: null });
     try {
       const detail = await api.getPaper(id);
-      set({ current: detail });
+      if (requestId === currentPaperRequestId) {
+        set({ current: detail });
+      }
     } finally {
-      set({ loadingCurrent: false });
+      if (requestId === currentPaperRequestId) {
+        set({ loadingCurrent: false });
+      }
     }
   },
 

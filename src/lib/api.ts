@@ -14,16 +14,23 @@ import { buildRequestLlmProfile, profileCacheKey } from "@/lib/llmProfile";
 
 const BASE = "/api";
 const conceptExpansionCache = new Map<string, Promise<ConceptExpansion>>();
+const studyPackCache = new Map<string, Promise<StudyPack>>();
 
 function clearConceptExpansionCache(paperId?: string) {
   if (!paperId) {
     conceptExpansionCache.clear();
+    studyPackCache.clear();
     return;
   }
 
   for (const key of conceptExpansionCache.keys()) {
     if (key.startsWith(`${paperId}:`)) {
       conceptExpansionCache.delete(key);
+    }
+  }
+  for (const key of studyPackCache.keys()) {
+    if (key.startsWith(`${paperId}:`)) {
+      studyPackCache.delete(key);
     }
   }
 }
@@ -49,6 +56,13 @@ export async function getHealth(): Promise<HealthResponse> {
 // ── Papers ──────────────────────
 
 export async function uploadPaper(file: File): Promise<UploadResponse> {
+  if (file.type && file.type !== "application/pdf") {
+    throw new Error("请上传 PDF 文件");
+  }
+  if (!file.name.toLowerCase().endsWith(".pdf")) {
+    throw new Error("请上传 .pdf 文件");
+  }
+
   clearConceptExpansionCache();
   const form = new FormData();
   form.append("file", file);
@@ -116,8 +130,18 @@ export async function getStudyPack(
   paperId: string,
   profile: ClientLlmProfile | undefined = buildRequestLlmProfile(),
 ): Promise<StudyPack> {
-  return request<StudyPack>(`/papers/${paperId}/study-pack`, {
+  const cacheKey = `${paperId}:${profileCacheKey(profile)}`;
+  const cached = studyPackCache.get(cacheKey);
+  if (cached) return cached;
+
+  const pending = request<StudyPack>(`/papers/${paperId}/study-pack`, {
     method: "POST",
     body: JSON.stringify(profile ? { llm_profile: profile } : {}),
+  }).catch((error) => {
+    studyPackCache.delete(cacheKey);
+    throw error;
   });
+
+  studyPackCache.set(cacheKey, pending);
+  return pending;
 }

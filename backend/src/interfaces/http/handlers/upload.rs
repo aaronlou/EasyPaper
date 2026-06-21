@@ -32,6 +32,9 @@ pub async fn upload_paper(
         match name.as_str() {
             "file" => {
                 let fname = file_name.unwrap_or_else(|| "paper.pdf".to_string());
+                if !fname.to_ascii_lowercase().ends_with(".pdf") {
+                    return Err(AppError::BadRequest("仅支持上传 PDF 文件".into()));
+                }
                 let data = field
                     .bytes()
                     .await

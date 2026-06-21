@@ -5,14 +5,33 @@ import { ReaderProvider } from "@/contexts/ReaderContext";
 import ConceptDeepDiveModal from "@/components/reader/ConceptDeepDiveModal";
 import ConceptGraphBlock from "@/components/reader/ConceptGraphBlock";
 import StudyPackPanel from "@/components/reader/StudyPackPanel";
-import { ArrowRight, BookOpen, Layers3, Network, Route, Sparkles } from "lucide-react";
-import type { SectionBlock as SectionBlockType } from "@/types";
+import {
+  ArrowRight,
+  BookOpen,
+  Compass,
+  Layers3,
+  Lightbulb,
+  Network,
+  Route,
+  SearchCheck,
+  Sparkles,
+} from "lucide-react";
+import type {
+  Block,
+  SectionBlock as SectionBlockType,
+} from "@/types";
 
 interface Props {
   paperId: string;
 }
 
-type WorkspaceMode = "overview" | "research" | "concepts" | "reading";
+type WorkspaceMode =
+  | "problem"
+  | "method"
+  | "innovation"
+  | "evidence"
+  | "concepts"
+  | "reading";
 
 const workspaceTabs: {
   id: WorkspaceMode;
@@ -22,31 +41,45 @@ const workspaceTabs: {
   icon: typeof BookOpen;
 }[] = [
   {
-    id: "overview",
+    id: "problem",
     step: "01",
-    title: "建立总览",
-    description: "先确认论文问题、核心贡献和阅读目标",
-    icon: BookOpen,
+    title: "问题定位",
+    description: "这篇 paper 到底想解决什么问题",
+    icon: SearchCheck,
   },
   {
-    id: "research",
+    id: "method",
     step: "02",
-    title: "研究地图",
-    description: "把启发、结构、前置知识和后续方向串起来",
+    title: "如何做的",
+    description: "方法路径、结构逻辑和核心机制",
     icon: Route,
   },
   {
-    id: "concepts",
+    id: "innovation",
     step: "03",
+    title: "创新借鉴",
+    description: "关键创新点和可迁移的启发",
+    icon: Lightbulb,
+  },
+  {
+    id: "evidence",
+    step: "04",
+    title: "证据评估",
+    description: "论文用什么证据支撑结论",
+    icon: BookOpen,
+  },
+  {
+    id: "concepts",
+    step: "05",
     title: "概念骨架",
-    description: "通过关系图定位关键术语和依赖关系",
+    description: "关键术语、依赖关系和概念实验室",
     icon: Network,
   },
   {
     id: "reading",
-    step: "04",
+    step: "06",
     title: "正文深读",
-    description: "回到章节、证据、图表和自测题",
+    description: "回到章节、图表、段落和自测",
     icon: Layers3,
   },
 ];
@@ -54,11 +87,24 @@ const workspaceTabs: {
 export default function ReaderView({ paperId }: Props) {
   const { current, loadPaper, loadingCurrent } = usePaperStore();
   const [activeConceptId, setActiveConceptId] = useState<string | null>(null);
-  const [activeMode, setActiveMode] = useState<WorkspaceMode>("overview");
+  const [activeMode, setActiveMode] = useState<WorkspaceMode>("problem");
+  const [visitedModes, setVisitedModes] = useState<Set<WorkspaceMode>>(
+    () => new Set(["problem"]),
+  );
 
   useEffect(() => {
     loadPaper(paperId);
   }, [paperId, loadPaper]);
+
+  const changeMode = (mode: WorkspaceMode) => {
+    setActiveMode(mode);
+    setVisitedModes((prev) => {
+      if (prev.has(mode)) return prev;
+      const next = new Set(prev);
+      next.add(mode);
+      return next;
+    });
+  };
 
   if (loadingCurrent || !current || !current.interpretation) {
     return (
@@ -74,9 +120,11 @@ export default function ReaderView({ paperId }: Props) {
   const sections = blocks.filter(
     (block): block is SectionBlockType => block.type === "section",
   );
+  const evidenceBlocks = blocks.filter(isEvidenceBlock);
+  const methodBlocks = blocks.filter(isMethodBlock);
 
   const openSection = (sectionId: string) => {
-    setActiveMode("reading");
+    changeMode("reading");
     window.setTimeout(() => {
       document.getElementById(sectionId)?.scrollIntoView({
         behavior: "smooth",
@@ -86,7 +134,7 @@ export default function ReaderView({ paperId }: Props) {
   };
 
   const openConcept = (conceptId: string) => {
-    setActiveMode("concepts");
+    changeMode("concepts");
     setActiveConceptId(conceptId);
   };
 
@@ -126,47 +174,82 @@ export default function ReaderView({ paperId }: Props) {
                 <div className="rounded-lg border border-slate-200 bg-white px-4 py-3">
                   <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-900">
                     <Sparkles className="h-4 w-4 text-sky-600" />
-                    建议读法
+                    推荐读法
                   </div>
                   <p className="text-sm leading-6 text-slate-600">
-                    先获得整体判断，再用研究地图找学习路径，最后回到章节证据。
+                    先回答论文问题，再看方法、创新、证据，最后进入概念和正文。
                   </p>
                 </div>
               </div>
             </header>
 
-            <WorkspaceTabs activeMode={activeMode} onChange={setActiveMode} />
+            <WorkspaceTabs activeMode={activeMode} onChange={changeMode} />
 
             <div className="py-7">
-              <WorkspacePane active={activeMode === "overview"}>
-                <OverviewWorkspace
+              <WorkspacePane active={activeMode === "problem"} mounted={visitedModes.has("problem")}>
+                <ProblemWorkspace
                   summary={interpretation.summary}
                   activeTab={workspaceTabs[0]}
-                  onChangeMode={setActiveMode}
+                  onChangeMode={changeMode}
+                  paperTitle={paper.title}
                   sectionsCount={sections.length}
                   conceptsCount={interpretation.concepts.length}
+                  firstSections={sections.slice(0, 4)}
                 />
               </WorkspacePane>
 
-              <WorkspacePane active={activeMode === "research"}>
+              <WorkspacePane active={activeMode === "method"} mounted={visitedModes.has("method")}>
                 <WorkspaceSection
                   activeTab={workspaceTabs[1]}
-                  title="先把论文变成可行动的研究地图"
-                  description="这一层回答论文带来的启发、它的写作结构、理解所需前置知识，以及可以继续深挖的研究方向。"
+                  title="它是如何做的"
+                  description="这里先看论文的结构和方法链路。目标不是背模块名，而是理解作者如何把问题拆成可操作步骤。"
                   nextTab={workspaceTabs[2]}
-                  onChangeMode={setActiveMode}
+                  onChangeMode={changeMode}
                 >
-                  <StudyPackPanel paperId={paperId} />
+                  <StudyPackPanel paperId={paperId} initialTab="structure" />
+                  {methodBlocks.length > 0 && (
+                    <BlockPreviewStrip
+                      title="方法相关图表与对比"
+                      blocks={methodBlocks.slice(0, 4)}
+                    />
+                  )}
                 </WorkspaceSection>
               </WorkspacePane>
 
-              <WorkspacePane active={activeMode === "concepts"}>
+              <WorkspacePane
+                active={activeMode === "innovation"}
+                mounted={visitedModes.has("innovation")}
+              >
                 <WorkspaceSection
                   activeTab={workspaceTabs[2]}
-                  title="建立概念之间的依赖关系"
-                  description="先在图上定位关键概念，再进入概念实验室查看解释、机制、互动演示、校准题和证据链。"
+                  title="关键创新点和可借鉴之处"
+                  description="读 paper 不只是知道它做了什么，还要提炼哪些设计、论证或工程取舍能迁移到自己的工作。"
                   nextTab={workspaceTabs[3]}
-                  onChangeMode={setActiveMode}
+                  onChangeMode={changeMode}
+                >
+                  <StudyPackPanel paperId={paperId} initialTab="inspiration" />
+                </WorkspaceSection>
+              </WorkspacePane>
+
+              <WorkspacePane active={activeMode === "evidence"} mounted={visitedModes.has("evidence")}>
+                <WorkspaceSection
+                  activeTab={workspaceTabs[3]}
+                  title="证据是否支撑了论文主张"
+                  description="先集中看引用、指标、图表和对比，再回到正文检查每个结论有没有落在证据上。"
+                  nextTab={workspaceTabs[4]}
+                  onChangeMode={changeMode}
+                >
+                  <EvidenceWorkspace blocks={evidenceBlocks} onOpenReading={() => changeMode("reading")} />
+                </WorkspaceSection>
+              </WorkspacePane>
+
+              <WorkspacePane active={activeMode === "concepts"} mounted={visitedModes.has("concepts")}>
+                <WorkspaceSection
+                  activeTab={workspaceTabs[4]}
+                  title="理解关键概念之间的依赖关系"
+                  description="先在图上定位关键概念，再进入概念实验室查看解释、机制、互动演示、校准题和证据链。"
+                  nextTab={workspaceTabs[5]}
+                  onChangeMode={changeMode}
                 >
                   <ConceptGraphBlock
                     paperId={paperId}
@@ -176,12 +259,12 @@ export default function ReaderView({ paperId }: Props) {
                 </WorkspaceSection>
               </WorkspacePane>
 
-              <WorkspacePane active={activeMode === "reading"}>
+              <WorkspacePane active={activeMode === "reading"} mounted={visitedModes.has("reading")}>
                 <WorkspaceSection
-                  activeTab={workspaceTabs[3]}
+                  activeTab={workspaceTabs[5]}
                   title="回到正文逐段深读"
                   description="这里保留原论文解读块：章节、段落、图表、对比、代码片段和自测题会按正文顺序展开。"
-                  onChangeMode={setActiveMode}
+                  onChangeMode={changeMode}
                 >
                   <div className="rounded-lg border border-slate-200 bg-white px-5 py-2 sm:px-7 sm:py-4">
                     {blocks.map((block) => (
@@ -203,14 +286,14 @@ export default function ReaderView({ paperId }: Props) {
             <div className="sticky top-20 max-h-[calc(100vh-6rem)] space-y-4 overflow-y-auto pr-1">
               <nav className="reader-panel p-4">
                 <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-900">
-                  <Route className="h-4 w-4 text-sky-600" />
-                  工作区
+                  <Compass className="h-4 w-4 text-sky-600" />
+                  阅读问题链
                 </div>
                 <div className="space-y-1">
                   {workspaceTabs.map((item) => (
                     <button
                       key={item.id}
-                      onClick={() => setActiveMode(item.id)}
+                      onClick={() => changeMode(item.id)}
                       className={`group grid w-full grid-cols-[28px_minmax(0,1fr)] gap-2 rounded-md px-2 py-2 text-left text-sm transition ${
                         activeMode === item.id
                           ? "bg-slate-950 text-white"
@@ -272,7 +355,7 @@ export default function ReaderView({ paperId }: Props) {
               </nav>
             )}
 
-            {(activeMode === "concepts" || activeMode === "overview") &&
+            {(activeMode === "concepts" || activeMode === "problem") &&
               interpretation.concepts.length > 0 && (
               <div className="reader-panel p-4">
                 <div className="mb-3 text-sm font-semibold text-slate-800">
@@ -313,7 +396,7 @@ function WorkspaceTabs({
 }) {
   return (
     <nav
-      aria-label="阅读工作区"
+      aria-label="阅读问题链"
       className="sticky top-[57px] z-30 -mx-4 border-b border-slate-200 bg-[#f7f8fb]/95 px-4 py-3 backdrop-blur lg:-mx-8 lg:px-8"
     >
       <div className="flex gap-2 overflow-x-auto">
@@ -324,7 +407,7 @@ function WorkspaceTabs({
             <button
               key={item.id}
               onClick={() => onChange(item.id)}
-              className={`grid min-w-[180px] shrink-0 grid-cols-[28px_minmax(0,1fr)] items-start gap-2 rounded-lg border px-3 py-2.5 text-left transition md:min-w-0 md:flex-1 ${
+              className={`grid min-w-[188px] shrink-0 grid-cols-[28px_minmax(0,1fr)] items-start gap-2 rounded-lg border px-3 py-2.5 text-left transition md:min-w-[160px] md:flex-1 ${
                 active
                   ? "border-slate-950 bg-slate-950 text-white shadow-sm"
                   : "border-slate-200 bg-white text-slate-600 hover:border-sky-300 hover:bg-sky-50"
@@ -368,11 +451,14 @@ function WorkspaceTabs({
 
 function WorkspacePane({
   active,
+  mounted,
   children,
 }: {
   active: boolean;
+  mounted: boolean;
   children: React.ReactNode;
 }) {
+  if (!mounted) return null;
   return (
     <div className={active ? "block" : "hidden"} aria-hidden={!active}>
       {children}
@@ -380,32 +466,39 @@ function WorkspacePane({
   );
 }
 
-function OverviewWorkspace({
+function ProblemWorkspace({
   summary,
   activeTab,
   onChangeMode,
+  paperTitle,
   sectionsCount,
   conceptsCount,
+  firstSections,
 }: {
   summary?: string;
   activeTab: (typeof workspaceTabs)[number];
   onChangeMode: (mode: WorkspaceMode) => void;
+  paperTitle: string;
   sectionsCount: number;
   conceptsCount: number;
+  firstSections: SectionBlockType[];
 }) {
   return (
     <WorkspaceSection
       activeTab={activeTab}
-      title="先建立论文的整体坐标"
-      description="这一页只保留最重要的判断和下一步入口，避免一开始被所有内容淹没。"
+      title="这篇 paper 要解决什么问题"
+      description="读论文的第一步不是看模型细节，而是先判断：作者面对的困难是什么，为什么旧方法不够，核心主张是什么。"
       nextTab={workspaceTabs[1]}
       onChangeMode={onChangeMode}
     >
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_260px]">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
         <div className="rounded-lg border border-slate-200 bg-white px-5 py-4">
-          <div className="mb-3 text-sm font-semibold text-slate-500">核心贡献</div>
-          <p className="text-base leading-8 text-slate-700">
-            {summary || "当前论文暂未生成核心贡献摘要。"}
+          <div className="mb-2 text-sm font-semibold text-slate-500">论文主张</div>
+          <h3 className="text-xl font-semibold leading-tight text-slate-950">
+            {summary || paperTitle}
+          </h3>
+          <p className="mt-3 text-sm leading-7 text-slate-600">
+            接下来建议按右侧问题链阅读：先看方法如何回应这个问题，再判断创新、证据和可借鉴点。
           </p>
         </div>
 
@@ -428,8 +521,29 @@ function OverviewWorkspace({
         </div>
       </div>
 
+      {firstSections.length > 0 && (
+        <div className="mt-4 rounded-lg border border-slate-200 bg-white px-5 py-4">
+          <div className="mb-3 text-sm font-semibold text-slate-900">
+            先扫这些章节标题
+          </div>
+          <div className="grid gap-2 md:grid-cols-2">
+            {firstSections.map((section) => (
+              <div
+                key={section.id}
+                className="rounded-md bg-slate-50 px-3 py-2 text-sm text-slate-600"
+              >
+                <span className="mr-2 font-mono text-xs text-slate-400">
+                  {section.num}
+                </span>
+                {section.title}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="mt-4 grid gap-3 md:grid-cols-3">
-        {workspaceTabs.slice(1).map((item) => {
+        {workspaceTabs.slice(1, 4).map((item) => {
           const Icon = item.icon;
           return (
             <button
@@ -455,6 +569,81 @@ function OverviewWorkspace({
       </div>
     </WorkspaceSection>
   );
+}
+
+function EvidenceWorkspace({
+  blocks,
+  onOpenReading,
+}: {
+  blocks: Block[];
+  onOpenReading: () => void;
+}) {
+  if (blocks.length === 0) {
+    return (
+      <div className="rounded-lg border border-slate-200 bg-white px-5 py-6">
+        <div className="text-sm font-semibold text-slate-950">暂未提取到独立证据块</div>
+        <p className="mt-2 text-sm leading-6 text-slate-600">
+          可以进入正文深读查看原文引用、实验段落和图表解释。
+        </p>
+        <button
+          onClick={onOpenReading}
+          className="mt-4 inline-flex items-center gap-2 rounded-md bg-slate-950 px-3 py-2 text-sm font-semibold text-white"
+        >
+          去正文深读
+          <ArrowRight className="h-4 w-4" />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-lg border border-slate-200 bg-white px-5 py-4">
+        <div className="text-sm font-semibold text-slate-950">证据线索</div>
+        <p className="mt-2 text-sm leading-6 text-slate-600">
+          这里集中展示引用、指标、图表和方案对比。读的时候重点判断：这些证据是否真的支持论文主张。
+        </p>
+      </div>
+      <div className="space-y-4">
+        {blocks.slice(0, 8).map((block) => (
+          <div key={block.id}>{renderBlock(block)}</div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function BlockPreviewStrip({ title, blocks }: { title: string; blocks: Block[] }) {
+  if (blocks.length === 0) return null;
+
+  return (
+    <section className="mt-5 rounded-lg border border-slate-200 bg-white px-5 py-4">
+      <div className="mb-3 text-sm font-semibold text-slate-950">{title}</div>
+      <div className="space-y-4">
+        {blocks.map((block) => (
+          <div key={block.id}>{renderBlock(block)}</div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function isEvidenceBlock(block: Block) {
+  return (
+    block.type === "quote" ||
+    block.type === "stat_row" ||
+    block.type === "chart" ||
+    block.type === "comparison" ||
+    block.type === "figure"
+  );
+}
+
+function isMethodBlock(block: Block) {
+  if (block.type === "diagram") return true;
+  if (block.type === "comparison") return true;
+  if (block.type !== "figure") return false;
+  const caption = block.caption?.toLowerCase() ?? "";
+  return /method|architecture|pipeline|framework|机制|方法|架构|流程/.test(caption);
 }
 
 function WorkspaceSection({
