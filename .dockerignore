@@ -8,6 +8,7 @@ node_modules
 dist
 target
 data
+release
 *.log
 *.tsbuildinfo
 .DS_Store

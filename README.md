@@ -55,6 +55,45 @@ cp .env.docker.example .env
 EASYPAPER_IMAGE=easypaper:local docker compose up -d
 ```
 
+#### 离线包部署（适合 GitHub/GHCR 网络很慢的服务器）
+
+如果服务器访问 GitHub、GHCR 很慢，可以在本地构建镜像并打成离线包，服务器只负责加载镜像和启动容器。
+
+本地执行：
+
+```bash
+bash scripts/package-offline-deploy.sh
+```
+
+脚本会生成类似：
+
+```text
+release/easypaper-offline-20260101-120000.tar.gz
+```
+
+把这个包上传到服务器：
+
+```bash
+scp release/easypaper-offline-*.tar.gz root@服务器IP:/opt/
+```
+
+服务器执行：
+
+```bash
+mkdir -p /opt/easypaper
+tar -xzf /opt/easypaper-offline-*.tar.gz -C /opt/easypaper --strip-components=1
+cd /opt/easypaper
+
+# 第一次运行会创建 .env 并提示你编辑
+bash deploy/offline-up.sh
+
+# 编辑 .env，填入 OPENAI_API_KEY 和生产域名后，再运行一次
+nano .env
+bash deploy/offline-up.sh
+```
+
+后续更新也一样：本地重新生成离线包，上传到服务器，解压覆盖 `/opt/easypaper` 后运行 `bash deploy/offline-up.sh`。Docker volume `easypaper_data` 会保留 SQLite 数据库和上传文件。
+
 #### GitHub 自动生成镜像
 
 推送到 `main` 或发布 `v*.*.*` tag 后，GitHub Actions 会构建并推送：
