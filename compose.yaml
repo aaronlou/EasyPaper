@@ -1,6 +1,6 @@
 services:
   easypaper:
-    image: ghcr.io/aaronlou/easypaper:latest
+    image: ${EASYPAPER_IMAGE:-ghcr.io/aaronlou/easypaper:latest}
     container_name: easypaper
     restart: unless-stopped
     env_file:
@@ -11,7 +11,7 @@ services:
       EASYPAPER_UPLOAD_DIR: /data/uploads
       STATIC_DIR: /app/dist
     ports:
-      - "8787:8787"
+      - "127.0.0.1:8787:8787"
     volumes:
       - easypaper_data:/data
 

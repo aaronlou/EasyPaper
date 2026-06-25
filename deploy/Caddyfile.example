@@ -1,0 +1,10 @@
+# Replace these domains with your own.
+your-domain.com, www.your-domain.com {
+    encode zstd gzip
+
+    request_body {
+        max_size 60MB
+    }
+
+    reverse_proxy 127.0.0.1:8787
+}

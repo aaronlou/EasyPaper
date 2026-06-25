@@ -37,8 +37,8 @@ docker compose up -d
 
 访问：
 
-- Web 产品：http://服务器IP:8787
-- 健康检查：http://服务器IP:8787/api/health
+- Web 产品：建议通过 Caddy 绑定域名后访问 `https://your-domain.com`
+- 容器健康检查：在服务器上执行 `curl http://127.0.0.1:8787/api/health`
 
 如果 GHCR 镜像尚未设为 public，需要先登录：
 
@@ -52,7 +52,7 @@ echo YOUR_GITHUB_TOKEN | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password
 docker build -t easypaper:local .
 cp .env.docker.example .env
 # 编辑 .env，填入 OPENAI_API_KEY
-docker compose up -d
+EASYPAPER_IMAGE=easypaper:local docker compose up -d
 ```
 
 #### GitHub 自动生成镜像
@@ -66,6 +66,55 @@ ghcr.io/aaronlou/easypaper:sha-<commit>
 ```
 
 首次发布后，请在 GitHub 仓库的 Packages 页面确认镜像可见性；如果服务器不想配置 `docker login`，把 package visibility 设为 public。
+
+#### 使用 Caddy 绑定域名
+
+生产环境推荐让 EasyPaper 容器只监听服务器本机 `127.0.0.1:8787`，由 Caddy 负责公网 HTTPS、证书续期和反向代理。项目里的 `compose.yaml` 已按这个方式配置。
+
+1. 域名 DNS 添加 A 记录，指向服务器公网 IP：
+
+```text
+your-domain.com      A      服务器公网 IP
+www.your-domain.com  A      服务器公网 IP
+```
+
+2. 服务器防火墙 / 云安全组开放 `80/tcp` 和 `443/tcp`。`8787` 不需要对公网开放。
+
+3. 将 `deploy/Caddyfile.example` 复制到 Caddy 配置目录，替换成你的域名：
+
+```caddyfile
+your-domain.com, www.your-domain.com {
+    encode zstd gzip
+
+    request_body {
+        max_size 60MB
+    }
+
+    reverse_proxy 127.0.0.1:8787
+}
+```
+
+`request_body max_size 60MB` 需要大于 EasyPaper 的 50MB PDF 上传限制，否则大文件会先被 Caddy 拦截。
+
+4. 修改 `.env`，至少配置 LLM Key 和生产域名：
+
+```env
+OPENAI_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxx
+EASYPAPER_CORS_ORIGINS=https://your-domain.com,https://www.your-domain.com
+```
+
+5. 启动应用并重载 Caddy：
+
+```bash
+docker compose pull
+docker compose up -d
+curl http://127.0.0.1:8787/api/health
+
+sudo caddy validate --config /etc/caddy/Caddyfile
+sudo systemctl reload caddy
+```
+
+Caddy 会自动申请并续期 HTTPS 证书。证书签发前请确认域名已经解析到当前服务器，且 `80` / `443` 端口可从公网访问。
 
 ### 前置要求
 - Rust ≥ 1.88（推荐 1.95+）
