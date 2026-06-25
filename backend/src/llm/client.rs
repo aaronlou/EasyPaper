@@ -205,15 +205,54 @@ impl LlmClient {
         match parse_json_lenient(&raw) {
             Ok(value) => Ok(value),
             Err(first_error) => {
+                let mut raw_for_repair = raw;
+                let mut parse_error = first_error;
+                if is_probably_truncated_json(&raw_for_repair, &parse_error) {
+                    tracing::warn!(
+                        role = %role,
+                        "LLM JSON 看起来被截断，使用紧凑约束重试: {parse_error}; excerpt={}",
+                        error_excerpt(&raw_for_repair, parse_error.line(), parse_error.column())
+                    );
+                    let compact_user = compact_json_retry_prompt(user);
+                    match self
+                        .call_text_with_role(role, system, &compact_user, true)
+                        .await
+                    {
+                        Ok(compact_raw) => match parse_json_lenient(&compact_raw) {
+                            Ok(value) => return Ok(value),
+                            Err(compact_error) => {
+                                tracing::warn!(
+                                    role = %role,
+                                    "紧凑 JSON 重试仍解析失败，尝试修复: {compact_error}; excerpt={}",
+                                    error_excerpt(
+                                        &compact_raw,
+                                        compact_error.line(),
+                                        compact_error.column()
+                                    )
+                                );
+                                raw_for_repair = compact_raw;
+                                parse_error = compact_error;
+                            }
+                        },
+                        Err(err) => {
+                            tracing::warn!(
+                                role = %role,
+                                "紧凑 JSON 重试调用失败，回退到原始输出修复: {err}"
+                            );
+                        }
+                    }
+                }
                 tracing::warn!(
                     role = %role,
-                    "LLM JSON 首次解析失败，尝试自动修复: {first_error}; excerpt={}",
-                    error_excerpt(&raw, first_error.line(), first_error.column())
+                    "LLM JSON 解析失败，尝试自动修复: {parse_error}; excerpt={}",
+                    error_excerpt(&raw_for_repair, parse_error.line(), parse_error.column())
                 );
-                let repaired = self.repair_json(system, &raw, &first_error).await?;
+                let repaired = self
+                    .repair_json(system, &raw_for_repair, &parse_error)
+                    .await?;
                 parse_json_lenient(&repaired).map_err(|second_error| {
                     AppError::InvalidLlmOutput(format!(
-                        "{second_error}; repair_failed_after={first_error}; excerpt={}",
+                        "{second_error}; repair_failed_after={parse_error}; excerpt={}",
                         error_excerpt(&repaired, second_error.line(), second_error.column())
                     ))
                 })
@@ -453,6 +492,23 @@ fn parse_json_lenient(raw: &str) -> Result<Value, serde_json::Error> {
     serde_json::from_str(trimmed)
 }
 
+fn compact_json_retry_prompt(user: &str) -> String {
+    format!(
+        "{user}\n\n\
+         【重要重试约束】上一次输出 JSON 因长度或截断无法解析。请重新生成一份更紧凑但完整闭合的严格 JSON：\n\
+         - 优先保证 JSON 语法完整，所有对象和数组必须闭合\n\
+         - 所有数组使用要求中的最低数量\n\
+         - 所有文本字段压缩到 1-2 句\n\
+         - original_excerpt 不超过 160 个字符\n\
+         - 不要输出 markdown 或 JSON 之外的解释"
+    )
+}
+
+fn is_probably_truncated_json(raw: &str, error: &serde_json::Error) -> bool {
+    matches!(error.classify(), serde_json::error::Category::Eof)
+        || !raw.trim_end().ends_with(['}', ']']) && error.to_string().contains("EOF")
+}
+
 fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
         s.to_string()
@@ -527,5 +583,22 @@ mod tests {
         let providers = client.providers_for_role(LlmRole::Reader);
         assert_eq!(providers.len(), 1);
         assert_eq!(providers[0].id, "fallback");
+    }
+
+    #[test]
+    fn detects_truncated_json_string() {
+        let raw =
+            r#"{"translation":{"sections":[{"heading":"Implementation","original_excerpt":"The"#;
+        let error = parse_json_lenient(raw).expect_err("truncated JSON should fail");
+
+        assert!(is_probably_truncated_json(raw, &error));
+    }
+
+    #[test]
+    fn does_not_treat_closed_invalid_json_as_truncated() {
+        let raw = r#"{"items":[1,]}"#;
+        let error = parse_json_lenient(raw).expect_err("invalid JSON should fail");
+
+        assert!(!is_probably_truncated_json(raw, &error));
     }
 }

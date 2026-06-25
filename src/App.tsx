@@ -83,6 +83,18 @@ export default function App() {
       {view === "reader" && currentPaperId && (
         <ReaderView paperId={currentPaperId} />
       )}
+      <footer className="border-t border-slate-200 bg-white/80 px-4 py-4 text-center text-xs text-slate-500">
+        <span>终身学习</span>
+        <span className="mx-2 text-slate-300">|</span>
+        <a
+          href="https://beian.miit.gov.cn/"
+          target="_blank"
+          rel="noreferrer"
+          className="transition-colors hover:text-sky-700"
+        >
+          浙ICP备2024126456号-5
+        </a>
+      </footer>
       <AiSettingsModal
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
