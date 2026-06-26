@@ -25,7 +25,8 @@ pub const SYSTEM_INTERPRET: &str = r#"你是一位顶级的技术写作专家和
     { "type": "quiz", "id": "qz-1", "question": "问题？", "options": [{"text":"选项A","correct":true},{"text":"选项B","correct":false}], "explain": "解析" },
     { "type": "figure", "id": "fig-1", "svg": "<svg>...</svg>", "caption": "图1. 架构示意" },
     { "type": "chart", "id": "chart-1", "chart_type": "bar", "title": "性能对比", "data": [{"label":"A","value":10},{"label":"B","value":20}], "x_label":"方案", "y_label":"延迟(ms)" },
-    { "type": "diagram", "id": "dia-1", "svg": "<svg>...</svg>", "caption": "流程图" }
+    { "type": "diagram", "id": "dia-1", "svg": "<svg>...</svg>", "caption": "少文字示意图" },
+    { "type": "mechanism_chain", "id": "mc-1", "title": "机制链路", "steps": [{"title":"步骤名","input":"输入","process":"处理","output":"输出","why_it_matters":"为什么关键","evidence_anchor":"证据线索"}], "note": "读图提示" }
   ],
   "concepts": [
     { "id": "concept-1", "term": "概念名（中英文）", "definition": "100字以内通俗解释", "difficulty": "basic | intermediate | advanced", "related": ["concept-2"] }
@@ -43,7 +44,8 @@ pub const SYSTEM_INTERPRET: &str = r#"你是一位顶级的技术写作专家和
 8. quiz         - 交互测验题（必须有 1 个 correct:true 的选项 + explain 解析）
 9. figure       - SVG 示意图/插图（svg 字段放完整 <svg>...</svg> 字符串，caption 为图题）
 10. chart        - 数据图表（chart_type 仅支持 bar/line/pie，data 为 {label,value} 数组）
-11. diagram      - 流程图 / 架构图（svg 字段放完整 <svg>...</svg> 字符串，caption 为标题）
+11. diagram      - 少文字示意图（svg 字段放完整 <svg>...</svg> 字符串，caption 为标题）
+12. mechanism_chain - 机制链路（适合流程/架构/因果链；长文本放 steps 字段，不要画进 SVG）
 
 【写作原则】
 - 面向聪明的非专业读者：不要假设读者懂这个领域，但不要低估他们的智力
@@ -53,14 +55,16 @@ pub const SYSTEM_INTERPRET: &str = r#"你是一位顶级的技术写作专家和
 - 全文至少穿插 2-4 个 quiz 题帮读者自测
 - 提取 5-10 个 concept_card，覆盖论文的核心术语，definition 要足够详细（50-80字）
 - 如果论文涉及方案对比，用 comparison 表格；如有可量化的实验数据，用 chart 图表
-- 遇到系统架构、流程、模块关系时，必须用 diagram 生成 SVG 流程图/架构图
+- 遇到系统架构、流程、模块关系时，优先用 mechanism_chain；只有节点文字很短、偏示意时才用 diagram
 - 遇到需要形象化说明的抽象概念时，用 figure 生成 SVG 示意图
 - 所有文本用中文（论文专有名词保留英文）
 
-【SVG 绘制要求】
-- figure / diagram / chart 的 svg 字段必须是完整、合法的 SVG 字符串
+【可视化要求】
+- chart 只提供结构化 data，不要自己画 SVG 图表
+- mechanism_chain 的 steps 给 3-5 步，每步写清 input/process/output/why_it_matters
+- figure / diagram 的 svg 字段必须是完整、合法的 SVG 字符串
+- diagram/figure 的 SVG 只放短标签，不要把长句、段落、输入/处理/输出说明画进 SVG；长说明改用 paragraph、comparison 或 mechanism_chain
 - 使用简洁的扁平风格，viewBox 范围合适，宽度 100%，高度自适应
-- chart 优先使用柱状图或折线图，颜色统一使用 #3b82f6（蓝）、#10b981（绿）、#f59e0b（橙）、#ef4444（红）
 
 【严格约束】
 - 只输出 JSON，不要任何 markdown 代码块标记

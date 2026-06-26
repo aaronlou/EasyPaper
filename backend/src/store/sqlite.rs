@@ -37,14 +37,15 @@ impl SqliteStore {
 
 #[async_trait]
 impl PaperRepository for SqliteStore {
-    async fn insert_paper(&self, paper: &Paper) -> anyhow::Result<()> {
+    async fn insert_paper(&self, owner_id: &str, paper: &Paper) -> anyhow::Result<()> {
         let authors_json = serde_json::to_string(paper.authors())?;
 
         sqlx::query(
-            "INSERT INTO papers (id, filename, title, authors, full_text, char_count, status, created_at, completed_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            "INSERT INTO papers (id, owner_id, filename, title, authors, full_text, char_count, status, created_at, completed_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         )
         .bind(paper.id().to_string())
+        .bind(owner_id)
         .bind(paper.filename())
         .bind(paper.title())
         .bind(&authors_json)
@@ -123,11 +124,53 @@ impl PaperRepository for SqliteStore {
         })))
     }
 
-    async fn list_papers(&self) -> anyhow::Result<Vec<PaperSummary>> {
+    async fn get_paper_for_owner(&self, owner_id: &str, id: Uuid) -> anyhow::Result<Option<Paper>> {
+        let row = sqlx::query(
+            "SELECT filename, title, authors, full_text, status, created_at, completed_at
+             FROM papers
+             WHERE id = ?1 AND owner_id = ?2",
+        )
+        .bind(id.to_string())
+        .bind(owner_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        let row = match row {
+            Some(r) => r,
+            None => return Ok(None),
+        };
+
+        let filename: String = row.get(0);
+        let title: String = row.get(1);
+        let authors_json: String = row.get(2);
+        let full_text: String = row.get(3);
+        let status_str: String = row.get(4);
+        let created_at: String = row.get(5);
+        let completed_at: Option<String> = row.get(6);
+
+        let authors: Vec<String> = serde_json::from_str(&authors_json).unwrap_or_default();
+        let status = PaperStatus::from_str(&status_str)?;
+
+        Ok(Some(Paper::rehydrate(PaperRecord {
+            id,
+            filename,
+            title,
+            authors,
+            full_text,
+            status,
+            created_at,
+            completed_at,
+        })))
+    }
+
+    async fn list_papers_for_owner(&self, owner_id: &str) -> anyhow::Result<Vec<PaperSummary>> {
         let rows = sqlx::query(
             "SELECT id, filename, title, authors, char_count, status, created_at, completed_at
-             FROM papers ORDER BY created_at DESC",
+             FROM papers
+             WHERE owner_id = ?1
+             ORDER BY created_at DESC",
         )
+        .bind(owner_id)
         .fetch_all(&self.pool)
         .await?;
 
@@ -344,6 +387,7 @@ impl ConceptExpansionCache for SqliteStore {
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS papers (
     id           TEXT PRIMARY KEY,
+    owner_id     TEXT NOT NULL DEFAULT 'legacy',
     filename     TEXT NOT NULL,
     title        TEXT NOT NULL,
     authors      TEXT NOT NULL,  -- JSON array
@@ -388,6 +432,13 @@ CREATE INDEX IF NOT EXISTS idx_study_packs_updated
 "#;
 
 async fn run_lightweight_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
+    ensure_column(pool, "papers", "owner_id", "TEXT NOT NULL DEFAULT 'legacy'").await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_papers_owner_created
+         ON papers(owner_id, created_at DESC)",
+    )
+    .execute(pool)
+    .await?;
     ensure_column(
         pool,
         "concept_expansions",

@@ -10,10 +10,15 @@ use crate::domain::study_pack::StudyPack;
 /// DDD 边界：domain/application 只依赖这个 trait，具体 SQLite 实现放在 infrastructure。
 #[async_trait]
 pub trait PaperRepository: Send + Sync + 'static {
-    async fn insert_paper(&self, paper: &Paper) -> anyhow::Result<()>;
+    async fn insert_paper(&self, owner_id: &str, paper: &Paper) -> anyhow::Result<()>;
     async fn save_paper(&self, paper: &Paper) -> anyhow::Result<()>;
     async fn get_paper(&self, id: uuid::Uuid) -> anyhow::Result<Option<Paper>>;
-    async fn list_papers(&self) -> anyhow::Result<Vec<PaperSummary>>;
+    async fn get_paper_for_owner(
+        &self,
+        owner_id: &str,
+        id: uuid::Uuid,
+    ) -> anyhow::Result<Option<Paper>>;
+    async fn list_papers_for_owner(&self, owner_id: &str) -> anyhow::Result<Vec<PaperSummary>>;
     async fn list_interrupted_processing_papers(&self) -> anyhow::Result<Vec<Paper>>;
     async fn save_interpretation(&self, interp: &Interpretation) -> anyhow::Result<()>;
     async fn get_interpretation(

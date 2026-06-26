@@ -1,7 +1,7 @@
 use axum::{
     Router,
     extract::DefaultBodyLimit,
-    http::{HeaderValue, Method, header::CONTENT_TYPE},
+    http::{HeaderName, HeaderValue, Method, header::CONTENT_TYPE},
     routing::{get, post},
 };
 use tower_http::{
@@ -15,6 +15,7 @@ use crate::application::paper_workflow::PaperWorkflow;
 use crate::config::Config;
 use crate::models::api::ProgressInfo;
 
+pub mod device;
 pub mod handlers;
 
 /// HTTP handler 共享状态。
@@ -30,8 +31,8 @@ impl AppState {
     }
 
     /// 获取某篇论文的最新进度
-    pub async fn get_progress(&self, paper_id: Uuid) -> Option<ProgressInfo> {
-        self.workflow.get_progress(paper_id).await
+    pub async fn get_progress(&self, owner_id: &str, paper_id: Uuid) -> Option<ProgressInfo> {
+        self.workflow.get_progress(owner_id, paper_id).await
     }
 }
 
@@ -53,7 +54,10 @@ fn cors_layer(config: &Config) -> CorsLayer {
                 HeaderValue::from_static("http://127.0.0.1:5173"),
             ]))
             .allow_methods([Method::GET, Method::POST])
-            .allow_headers([CONTENT_TYPE]);
+            .allow_headers([
+                CONTENT_TYPE,
+                HeaderName::from_static("x-easypaper-device-id"),
+            ]);
     }
 
     let origins = config
@@ -71,7 +75,10 @@ fn cors_layer(config: &Config) -> CorsLayer {
     CorsLayer::new()
         .allow_origin(AllowOrigin::list(origins))
         .allow_methods([Method::GET, Method::POST])
-        .allow_headers([CONTENT_TYPE])
+        .allow_headers([
+            CONTENT_TYPE,
+            HeaderName::from_static("x-easypaper-device-id"),
+        ])
 }
 
 fn api_router(state: AppState) -> Router {

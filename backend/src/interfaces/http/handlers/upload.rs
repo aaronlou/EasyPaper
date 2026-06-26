@@ -5,6 +5,7 @@ use axum::{
 
 use crate::error::{AppError, AppResult};
 use crate::interfaces::http::AppState;
+use crate::interfaces::http::device::DeviceId;
 use crate::models::api::{ClientLlmProfile, UploadResponse};
 
 /// 最大 PDF 大小：50 MB
@@ -15,6 +16,7 @@ pub const MAX_PDF_SIZE: usize = 50 * 1024 * 1024;
 /// HTTP 层只负责协议适配：解析 multipart、做尺寸校验、调用应用用例。
 pub async fn upload_paper(
     State(state): State<AppState>,
+    device_id: DeviceId,
     mut multipart: Multipart,
 ) -> AppResult<Json<UploadResponse>> {
     let mut filename = None;
@@ -73,7 +75,7 @@ pub async fn upload_paper(
 
     let paper = state
         .workflow
-        .upload_paper(filename, pdf_bytes, llm_profile)
+        .upload_paper(device_id.as_str(), filename, pdf_bytes, llm_profile)
         .await?;
 
     Ok(Json(UploadResponse { paper }))

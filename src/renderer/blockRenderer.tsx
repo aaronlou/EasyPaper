@@ -14,6 +14,7 @@ import CustomHtmlBlock from "@/components/reader/CustomHtmlBlock";
 import FigureBlock from "@/components/reader/FigureBlock";
 import ChartBlock from "@/components/reader/ChartBlock";
 import DiagramBlock from "@/components/reader/DiagramBlock";
+import MechanismChainBlock from "@/components/reader/MechanismChainBlock";
 
 export function renderBlock(block: Block): React.ReactNode {
   switch (block.type) {
@@ -43,6 +44,8 @@ export function renderBlock(block: Block): React.ReactNode {
       return <ChartBlock block={block} />;
     case "diagram":
       return <DiagramBlock block={block} />;
+    case "mechanism_chain":
+      return <MechanismChainBlock block={block} />;
     default:
       return null;
   }

@@ -17,7 +17,8 @@ export type Block =
   | CustomHtmlBlock
   | FigureBlock
   | ChartBlock
-  | DiagramBlock;
+  | DiagramBlock
+  | MechanismChainBlock;
 
 export interface SectionBlock {
   type: "section";
@@ -120,6 +121,23 @@ export interface DiagramBlock {
   id: string;
   svg: string;
   caption?: string;
+}
+
+export interface MechanismChainStep {
+  title: string;
+  input: string;
+  process: string;
+  output: string;
+  why_it_matters: string;
+  evidence_anchor?: string;
+}
+
+export interface MechanismChainBlock {
+  type: "mechanism_chain";
+  id: string;
+  title?: string;
+  steps: MechanismChainStep[];
+  note?: string;
 }
 
 // ── Concept ────────────────────────

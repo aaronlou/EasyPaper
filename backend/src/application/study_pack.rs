@@ -15,6 +15,7 @@ const STUDY_PACK_CACHE_VERSION: &str = "study-pack-v2-bilingual-translation";
 impl PaperWorkflow {
     pub async fn get_or_generate_study_pack(
         &self,
+        owner_id: &str,
         paper_id: Uuid,
         llm_profile: Option<ClientLlmProfile>,
     ) -> AppResult<StudyPack> {
@@ -28,6 +29,13 @@ impl PaperWorkflow {
         );
         let workflow = self.with_client_llm_profile(llm_profile);
         let cache_version = workflow.study_pack_cache_version();
+
+        let paper = workflow
+            .papers
+            .get_paper_for_owner(owner_id, paper_id)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?
+            .ok_or_else(|| AppError::NotFound(format!("论文 {paper_id} 不存在")))?;
 
         if let Some(pack) = workflow
             .papers
@@ -54,12 +62,6 @@ impl PaperWorkflow {
             return Ok(pack);
         }
 
-        let paper = workflow
-            .papers
-            .get_paper(paper_id)
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?
-            .ok_or_else(|| AppError::NotFound(format!("论文 {paper_id} 不存在")))?;
         let interpretation = workflow
             .papers
             .get_interpretation(paper_id)

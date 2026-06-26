@@ -90,6 +90,16 @@ pub enum Block {
         #[serde(skip_serializing_if = "Option::is_none")]
         caption: Option<String>,
     },
+    /// 机制链路。用结构化数据交给前端排版，避免长文本塞进 SVG 后重叠。
+    MechanismChain {
+        id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+        #[serde(default)]
+        steps: Vec<MechanismChainStep>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        note: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -102,6 +112,17 @@ pub struct Stat {
 pub struct ChartDataPoint {
     pub label: String,
     pub value: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MechanismChainStep {
+    pub title: String,
+    pub input: String,
+    pub process: String,
+    pub output: String,
+    pub why_it_matters: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub evidence_anchor: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

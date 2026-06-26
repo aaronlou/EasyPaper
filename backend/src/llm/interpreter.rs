@@ -6,7 +6,8 @@ use tokio::task::JoinSet;
 use uuid::Uuid;
 
 use crate::domain::interpretation::{
-    Block, ChartDataPoint, ComparisonRow, Concept, Interpretation, QuizOption, Stat,
+    Block, ChartDataPoint, ComparisonRow, Concept, Interpretation, MechanismChainStep, QuizOption,
+    Stat,
 };
 use crate::error::{AppError, AppResult};
 use crate::llm::{LlmClient, LlmRole};
@@ -752,10 +753,28 @@ fn build_interpretation_from_notes(
     if let Some(method) = &review.method
         && !method.mechanism_chain.is_empty()
     {
-        blocks.push(Block::Diagram {
-            id: "diagram-1".to_string(),
-            svg: build_review_mechanism_svg(&method.mechanism_chain),
-            caption: Some("specialist agent 汇总出的论文机制链路".to_string()),
+        blocks.push(Block::MechanismChain {
+            id: "mechanism-chain-1".to_string(),
+            title: Some("specialist agent 汇总出的论文机制链路".to_string()),
+            steps: method
+                .mechanism_chain
+                .iter()
+                .filter(|step| !step.title.trim().is_empty())
+                .take(5)
+                .map(|step| MechanismChainStep {
+                    title: truncate_chars(&step.title, 80),
+                    input: truncate_chars(&step.input, 180),
+                    process: truncate_chars(&step.process, 220),
+                    output: truncate_chars(&step.output, 180),
+                    why_it_matters: truncate_chars(&step.why_it_matters, 220),
+                    evidence_anchor: non_empty_string(&step.evidence_anchor)
+                        .map(|value| truncate_chars(&value, 160)),
+                })
+                .collect(),
+            note: Some(
+                "读法：每个节点都要能回答“输入是什么、处理如何发生、输出为什么支持论文主张”。"
+                    .to_string(),
+            ),
         });
         blocks.push(Block::Comparison {
             id: "cmp-mechanism-chain".to_string(),
@@ -783,10 +802,25 @@ fn build_interpretation_from_notes(
                 .collect(),
         });
     } else if !mechanisms.is_empty() {
-        blocks.push(Block::Diagram {
-            id: "diagram-1".to_string(),
-            svg: build_mechanism_svg(&mechanisms),
-            caption: Some("把论文机制拆成可讲给别人听的路径".to_string()),
+        blocks.push(Block::MechanismChain {
+            id: "mechanism-chain-1".to_string(),
+            title: Some("把论文机制拆成可讲给别人听的路径".to_string()),
+            steps: mechanisms
+                .iter()
+                .filter(|mechanism| !mechanism.name.trim().is_empty())
+                .take(5)
+                .map(|mechanism| MechanismChainStep {
+                    title: truncate_chars(&mechanism.name, 80),
+                    input: truncate_chars(&mechanism.input, 180),
+                    process: truncate_chars(&mechanism.process, 220),
+                    output: truncate_chars(&mechanism.output, 180),
+                    why_it_matters: truncate_chars(&mechanism.why, 220),
+                    evidence_anchor: None,
+                })
+                .collect(),
+            note: Some(
+                "读法：不要只记模块名，要能把每一步讲成输入、处理、输出和取舍。".to_string(),
+            ),
         });
     }
 
@@ -1545,62 +1579,6 @@ fn build_quiz_block(
     }
 }
 
-fn build_review_mechanism_svg(steps: &[ReviewMechanismStep]) -> String {
-    let width = 1040;
-    let height = 330;
-    let count = steps.len().clamp(1, 5);
-    let card_width = 176;
-    let gap = 22;
-    let start_x = ((width - (count * card_width + (count - 1) * gap)) / 2) as i32;
-
-    let mut cards = String::new();
-    for (idx, step) in steps.iter().take(count).enumerate() {
-        let x = start_x + (idx * (card_width + gap)) as i32;
-        let title = escape_xml(&truncate_chars(&step.title, 22));
-        let input = escape_xml(&truncate_chars(&step.input, 28));
-        let process = escape_xml(&truncate_chars(&step.process, 34));
-        let output = escape_xml(&truncate_chars(&step.output, 28));
-        cards.push_str(&format!(
-            r##"<g>
-  <rect x="{x}" y="74" width="{card_width}" height="176" rx="16" fill="#ffffff" stroke="#a7f3d0" stroke-width="2"/>
-  <circle cx="{cx}" cy="74" r="18" fill="#059669"/>
-  <text x="{cx}" y="80" text-anchor="middle" font-size="15" font-weight="700" fill="#ffffff">{step_no}</text>
-  <text x="{tx}" y="112" font-size="14" font-weight="700" fill="#0f172a">{title}</text>
-  <text x="{tx}" y="142" font-size="11" fill="#475569">输入: {input}</text>
-  <text x="{tx}" y="166" font-size="11" fill="#475569">处理: {process}</text>
-  <text x="{tx}" y="204" font-size="11" fill="#475569">输出: {output}</text>
-</g>"##,
-            x = x,
-            cx = x + card_width as i32 / 2,
-            tx = x + 16,
-            step_no = idx + 1,
-            title = title,
-            input = input,
-            process = process,
-            output = output,
-        ));
-
-        if idx + 1 < count {
-            let arrow_x = x + card_width as i32 + 6;
-            cards.push_str(&format!(
-                r##"<path d="M {arrow_x} 160 H {end_x}" stroke="#14b8a6" stroke-width="3" stroke-linecap="round"/>
-<path d="M {end_x} 160 l -8 -6 v12 z" fill="#14b8a6"/>"##,
-                arrow_x = arrow_x,
-                end_x = arrow_x + gap as i32 - 10,
-            ));
-        }
-    }
-
-    format!(
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" role="img" aria-label="多 agent 汇总的论文机制链路">
-  <rect width="{width}" height="{height}" rx="24" fill="#f8fafc"/>
-  <text x="44" y="42" font-size="19" font-weight="700" fill="#0f172a">A2A Specialist Review: mechanism chain</text>
-  <text x="44" y="276" font-size="13" fill="#475569">读法：每个节点都要能回答“输入是什么、处理如何发生、输出为什么支持论文主张”。</text>
-  {cards}
-</svg>"##
-    )
-}
-
 fn build_a2a_task_envelope(
     paper_id: Uuid,
     title: &str,
@@ -1712,58 +1690,6 @@ fn sanitize_confidence(value: &str) -> String {
     }
 }
 
-fn build_mechanism_svg(mechanisms: &[SliceMechanism]) -> String {
-    let width = 920;
-    let height = 260;
-    let count = mechanisms.len().clamp(1, 4);
-    let card_width = 190;
-    let gap = 30;
-    let start_x = ((width - (count * card_width + (count - 1) * gap)) / 2) as i32;
-
-    let mut cards = String::new();
-    for (idx, mechanism) in mechanisms.iter().take(count).enumerate() {
-        let x = start_x + (idx * (card_width + gap)) as i32;
-        let name = escape_xml(&truncate_chars(&mechanism.name, 24));
-        let input = escape_xml(&truncate_chars(&mechanism.input, 30));
-        let output = escape_xml(&truncate_chars(&mechanism.output, 30));
-        cards.push_str(&format!(
-            r##"<g>
-  <rect x="{x}" y="62" width="{card_width}" height="132" rx="14" fill="#ffffff" stroke="#bfdbfe" stroke-width="2"/>
-  <circle cx="{cx}" cy="62" r="18" fill="#2563eb"/>
-  <text x="{cx}" y="68" text-anchor="middle" font-size="15" font-weight="700" fill="#ffffff">{step}</text>
-  <text x="{tx}" y="100" font-size="15" font-weight="700" fill="#0f172a">{name}</text>
-  <text x="{tx}" y="130" font-size="12" fill="#475569">输入：{input}</text>
-  <text x="{tx}" y="154" font-size="12" fill="#475569">输出：{output}</text>
-</g>"##,
-            x = x,
-            cx = x + card_width as i32 / 2,
-            tx = x + 18,
-            step = idx + 1,
-            name = name,
-            input = input,
-            output = output,
-        ));
-
-        if idx + 1 < count {
-            let arrow_x = x + card_width as i32 + 8;
-            cards.push_str(&format!(
-                r##"<path d="M {arrow_x} 128 H {end_x}" stroke="#38bdf8" stroke-width="3" stroke-linecap="round"/>
-<path d="M {end_x} 128 l -8 -6 v12 z" fill="#38bdf8"/>"##,
-                arrow_x = arrow_x,
-                end_x = arrow_x + gap as i32 - 12,
-            ));
-        }
-    }
-
-    format!(
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" role="img" aria-label="论文机制流程图">
-  <rect width="{width}" height="{height}" rx="22" fill="#f8fafc"/>
-  <text x="40" y="38" font-size="18" font-weight="700" fill="#0f172a">Feynman Path: 输入 -> 处理 -> 输出 -> 取舍</text>
-  {cards}
-</svg>"##
-    )
-}
-
 fn sanitize_difficulty(value: &str) -> String {
     let value = value.trim().to_ascii_lowercase();
     if value.contains("basic") {
@@ -1833,12 +1759,13 @@ fn truncate_chars(value: &str, max: usize) -> String {
     result
 }
 
-fn escape_xml(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
+fn non_empty_string(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 #[cfg(test)]

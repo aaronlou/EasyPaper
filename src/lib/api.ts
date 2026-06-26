@@ -11,6 +11,7 @@ import type {
   UploadResponse,
 } from "@/types";
 import { buildRequestLlmProfile, profileCacheKey } from "@/lib/llmProfile";
+import { getDeviceId } from "@/lib/deviceIdentity";
 
 const BASE = "/api";
 const conceptExpansionCache = new Map<string, Promise<ConceptExpansion>>();
@@ -36,9 +37,13 @@ function clearConceptExpansionCache(paperId?: string) {
 }
 
 async function request<T>(url: string, opts?: RequestInit): Promise<T> {
+  const headers = new Headers(opts?.headers);
+  headers.set("Content-Type", "application/json");
+  headers.set("X-EasyPaper-Device-Id", getDeviceId());
+
   const res = await fetch(BASE + url, {
-    headers: { "Content-Type": "application/json" },
     ...opts,
+    headers,
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -72,6 +77,7 @@ export async function uploadPaper(file: File): Promise<UploadResponse> {
   }
   const res = await fetch(BASE + "/papers", {
     method: "POST",
+    headers: { "X-EasyPaper-Device-Id": getDeviceId() },
     body: form,
   });
   if (!res.ok) {

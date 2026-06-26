@@ -16,11 +16,19 @@ impl PaperWorkflow {
     /// 对单个概念执行 Feynman 式深潜：回到原文证据、补足参考线索、再生成可讲解内容。
     pub async fn expand_concept(
         &self,
+        owner_id: &str,
         paper_id: Uuid,
         concept_id: String,
     ) -> AppResult<ConceptExpansion> {
         self.entitlements
             .record_workflow_start(self.ai_billing_mode, "concept_expand");
+        let paper = self
+            .papers
+            .get_paper_for_owner(owner_id, paper_id)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?
+            .ok_or_else(|| AppError::NotFound(format!("论文 {paper_id} 不存在")))?;
+
         if let Some(cached) = self
             .concept_expansions
             .get_concept_expansion(
@@ -39,13 +47,6 @@ impl PaperWorkflow {
             );
             return Ok(cached);
         }
-
-        let paper = self
-            .papers
-            .get_paper(paper_id)
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?
-            .ok_or_else(|| AppError::NotFound(format!("论文 {paper_id} 不存在")))?;
 
         let interpretation = self
             .papers
@@ -131,7 +132,7 @@ impl PaperWorkflow {
         Ok(expansion)
     }
 
-    pub(super) fn spawn_concept_prewarm(&self, paper_id: Uuid) {
+    pub(super) fn spawn_concept_prewarm(&self, owner_id: String, paper_id: Uuid) {
         if self.concept_prewarm_limit == 0 || !self.llm.is_configured() {
             return;
         }
@@ -175,7 +176,10 @@ impl PaperWorkflow {
             );
 
             for concept_id in concept_ids {
-                if let Err(err) = workflow.expand_concept(paper_id, concept_id.clone()).await {
+                if let Err(err) = workflow
+                    .expand_concept(&owner_id, paper_id, concept_id.clone())
+                    .await
+                {
                     tracing::warn!(
                         paper_id = %paper_id,
                         concept_id = %concept_id,

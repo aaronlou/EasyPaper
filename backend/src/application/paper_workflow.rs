@@ -135,18 +135,16 @@ impl PaperWorkflow {
 
     pub async fn register_extracted_paper(
         &self,
+        owner_id: &str,
         filename: String,
         extracted: ExtractedPaperText,
     ) -> AppResult<PaperSummary> {
-        let mut paper = Paper::new_uploaded(
-            filename,
-            extracted.title,
-            extracted.authors,
-            extracted.full_text,
-        );
+        let title = display_title_for_upload(&filename, &extracted.title);
+        let mut paper =
+            Paper::new_uploaded(filename, title, extracted.authors, extracted.full_text);
 
         self.papers
-            .insert_paper(&paper)
+            .insert_paper(owner_id, &paper)
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
 
@@ -162,7 +160,7 @@ impl PaperWorkflow {
         .await;
 
         if self.llm.is_configured() {
-            self.spawn_interpretation(paper.clone());
+            self.spawn_interpretation(owner_id.to_string(), paper.clone());
         } else {
             tracing::warn!(
                 "LLM 未配置，跳过解读。论文已保存，可在配置 OPENAI_API_KEY 后手动触发。"
@@ -192,6 +190,7 @@ impl PaperWorkflow {
 
     pub async fn upload_paper(
         &self,
+        owner_id: &str,
         filename: String,
         pdf_bytes: Vec<u8>,
         llm_profile: Option<ClientLlmProfile>,
@@ -213,24 +212,25 @@ impl PaperWorkflow {
         );
 
         self.with_client_llm_profile(llm_profile)
-            .register_extracted_paper(filename, extracted)
+            .register_extracted_paper(owner_id, filename, extracted)
             .await
     }
 
-    pub async fn list_papers(&self) -> AppResult<Vec<PaperSummary>> {
+    pub async fn list_papers(&self, owner_id: &str) -> AppResult<Vec<PaperSummary>> {
         self.papers
-            .list_papers()
+            .list_papers_for_owner(owner_id)
             .await
             .map_err(|e| AppError::Database(e.to_string()))
     }
 
     pub async fn get_paper_detail(
         &self,
+        owner_id: &str,
         id: Uuid,
     ) -> AppResult<(Paper, Option<crate::domain::interpretation::Interpretation>)> {
         let paper = self
             .papers
-            .get_paper(id)
+            .get_paper_for_owner(owner_id, id)
             .await
             .map_err(|e| AppError::Database(e.to_string()))?
             .ok_or_else(|| AppError::NotFound(format!("论文 {id} 不存在")))?;
@@ -249,6 +249,7 @@ impl PaperWorkflow {
 
     pub async fn retry_interpretation(
         &self,
+        owner_id: &str,
         id: Uuid,
         llm_profile: Option<ClientLlmProfile>,
     ) -> AppResult<PaperSummary> {
@@ -259,7 +260,7 @@ impl PaperWorkflow {
         let workflow = self.with_client_llm_profile(llm_profile);
         let mut paper = self
             .papers
-            .get_paper(id)
+            .get_paper_for_owner(owner_id, id)
             .await
             .map_err(|e| AppError::Database(e.to_string()))?
             .ok_or_else(|| AppError::NotFound(format!("论文 {id} 不存在")))?;
@@ -289,7 +290,7 @@ impl PaperWorkflow {
                 ),
             )
             .await;
-        workflow.spawn_interpretation(paper.clone());
+        workflow.spawn_interpretation(owner_id.to_string(), paper.clone());
 
         Ok(PaperSummary::from(&paper))
     }
@@ -299,14 +300,21 @@ impl PaperWorkflow {
         map.insert(paper_id, info);
     }
 
-    pub async fn get_progress(&self, paper_id: Uuid) -> Option<ProgressInfo> {
+    pub async fn get_progress(&self, owner_id: &str, paper_id: Uuid) -> Option<ProgressInfo> {
+        if !matches!(
+            self.papers.get_paper_for_owner(owner_id, paper_id).await,
+            Ok(Some(_))
+        ) {
+            return None;
+        }
+
         let map = self.progress.read().await;
         if let Some(info) = map.get(&paper_id).cloned() {
             return Some(info);
         }
         drop(map);
 
-        let paper = match self.papers.get_paper(paper_id).await {
+        let paper = match self.papers.get_paper_for_owner(owner_id, paper_id).await {
             Ok(Some(paper)) => paper,
             _ => return None,
         };
@@ -339,7 +347,7 @@ impl PaperWorkflow {
         })
     }
 
-    fn spawn_interpretation(&self, paper: Paper) {
+    fn spawn_interpretation(&self, owner_id: String, paper: Paper) {
         let store = self.papers.clone();
         let workflow = self.clone();
         let interpreter = self.interpreter.clone();
@@ -458,7 +466,7 @@ impl PaperWorkflow {
 
                     tracing::info!(paper_id = %paper_id, "解读完成 ✓");
 
-                    workflow.spawn_concept_prewarm(paper_id);
+                    workflow.spawn_concept_prewarm(owner_id, paper_id);
                 }
                 Err(e) => {
                     tracing::error!(paper_id = %paper_id, "解读失败: {e}");
@@ -477,5 +485,139 @@ impl PaperWorkflow {
                 }
             }
         });
+    }
+}
+
+fn display_title_for_upload(filename: &str, extracted_title: &str) -> String {
+    let normalized_title = normalize_display_text(extracted_title);
+    if is_usable_extracted_title(&normalized_title) {
+        return normalized_title;
+    }
+
+    title_from_filename(filename)
+}
+
+fn title_from_filename(filename: &str) -> String {
+    let basename = filename
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(filename)
+        .trim();
+    let stem = if basename.to_ascii_lowercase().ends_with(".pdf") && basename.len() > 4 {
+        &basename[..basename.len() - 4]
+    } else {
+        basename
+    };
+    let cleaned = normalize_display_text(&stem.replace('_', " "));
+
+    if cleaned.is_empty() {
+        "Untitled Paper".to_string()
+    } else {
+        cleaned
+    }
+}
+
+fn normalize_display_text(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn is_usable_extracted_title(title: &str) -> bool {
+    let len = title.chars().count();
+    if !(8..=180).contains(&len) || title.eq_ignore_ascii_case("Untitled Paper") {
+        return false;
+    }
+
+    let lower = title.to_ascii_lowercase();
+    if lower.starts_with("http")
+        || lower.contains("://")
+        || lower.starts_with("abstract")
+        || lower.starts_with("keywords")
+        || lower.starts_with("references")
+        || lower.starts_with("copyright")
+        || title.contains('@')
+        || title.ends_with('.')
+        || title.ends_with(';')
+        || title.ends_with('。')
+        || title.ends_with('；')
+        || looks_like_numbered_section_title(title)
+    {
+        return false;
+    }
+
+    let word_count = title.split_whitespace().count();
+    let lower_padded = format!(" {lower} ");
+    if word_count >= 10
+        && [
+            " however ",
+            " therefore ",
+            " this ",
+            " that ",
+            " aims to ",
+            " used in ",
+            " using the ",
+            " can be ",
+            " we ",
+            " our ",
+        ]
+        .iter()
+        .any(|phrase| lower_padded.contains(phrase))
+    {
+        return false;
+    }
+
+    !(first_alphabetic_is_lowercase(title) && word_count >= 6 && !title.contains(':'))
+}
+
+fn looks_like_numbered_section_title(title: &str) -> bool {
+    let Some(first_token) = title.split_whitespace().next() else {
+        return false;
+    };
+    let marker = first_token.trim_end_matches(|c| matches!(c, '.' | ')' | ':'));
+    if marker.is_empty() || marker.len() > 2 || !marker.chars().all(|c| c.is_ascii_digit()) {
+        return false;
+    }
+
+    title.chars().count() < 70
+}
+
+fn first_alphabetic_is_lowercase(value: &str) -> bool {
+    value
+        .chars()
+        .find(|c| c.is_alphabetic())
+        .is_some_and(|c| c.is_lowercase())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_title_prefers_usable_extracted_title() {
+        assert_eq!(
+            display_title_for_upload(
+                "fallback-name.pdf",
+                "Bigtable: A Distributed Storage System"
+            ),
+            "Bigtable: A Distributed Storage System"
+        );
+    }
+
+    #[test]
+    fn display_title_falls_back_to_filename_for_body_fragment() {
+        assert_eq!(
+            display_title_for_upload(
+                "paper-with-readable-name.pdf",
+                "role using the same criteria used in the inner loop. This cyclical process aims to progressively enhance data quality;"
+            ),
+            "paper-with-readable-name"
+        );
+    }
+
+    #[test]
+    fn display_title_removes_pdf_suffix_and_normalizes_underscores() {
+        assert_eq!(
+            display_title_for_upload("Attention_is_All_You_Need.PDF", "Untitled Paper"),
+            "Attention is All You Need"
+        );
     }
 }
